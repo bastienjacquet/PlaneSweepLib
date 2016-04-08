@@ -23,6 +23,8 @@
 #include <vtkPolyData.h>
 #include <vtkNew.h>
 #include <vtkXMLPolyDataWriter.h>
+#include <vtkStructuredGrid.h>
+#include <vtkXMLStructuredGridWriter.h>
 
 bool overlapCompare(std::pair<int, float> p1, std::pair<int, float> p2)
 {
@@ -70,7 +72,8 @@ int main(int argc, char* argv[])
     bool debug = true;
     bool filter = false;
     bool storeBestCostsAndUniquenessRatios = true;
-    bool writePointClouds = false;
+//    bool writePointClouds = false;
+    std::string writePointClouds;
 
     // pose grouping parameters
     int pGnumPlanes;
@@ -108,6 +111,8 @@ int main(int argc, char* argv[])
 
     int refViewStep;
 
+    std::string fileType;
+
     boost::program_options::options_description desc("Allowed options");
     desc.add_options()
             ("help", "Produce help message")
@@ -141,9 +146,9 @@ int main(int argc, char* argv[])
             ("PS_UNIQUENESS_RATIO_THRESHOLD", boost::program_options::value<float>(&thresholdUniq)->default_value(0.5), "Uniqueness ratio threshold. Only need if \"filter\" is toggled")
             ("PS_MIN_ANGLE_DEGREE", boost::program_options::value<float>(&minAngleDegree)->default_value(2.0), "Min angle degree between two frames")
             ("ref_view_step", boost::program_options::value<int>(&refViewStep)->default_value(0), "Best K")
+            ("writePointClouds", boost::program_options::value<std::string>(&writePointClouds)->default_value(""), "Saving data to a file [vrml, vtp, vts or vtpvts]")
 
-
-            ("writePointClouds", boost::program_options::bool_switch(&writePointClouds), "Write point clouds in vrml format")
+//            ("writePointClouds", boost::program_options::bool_switch(&writePointClouds), "Write point clouds in vrml format")
            // ("storeBestCostsAndUniquenessRatios", boost::program_options::bool_switch(&storeBestCostsAndUniquenessRatios), "Store the best costs and the uniqueness ratios in dat files")
             ;
 
@@ -633,7 +638,7 @@ int main(int argc, char* argv[])
         dM.saveInvDepthAsColorImage(fileNameImg.str(), minZ, maxZ);
         std::cout << "Saved : " << fileNameImg.str() << std::endl;
 
-        if (writePointClouds)
+        if (writePointClouds != "")
         {
             // scale refImg
 
@@ -653,66 +658,96 @@ int main(int argc, char* argv[])
             }
 
             //TODO: Add an option allowing to choose between VRML and VTP file
+
             //Convert to VRML file
-//            std::ostringstream pointCloudFileName;
-//            pointCloudFileName << outDir << "/" << baseName << "_point_cloud.wrl";
-//            std::ofstream pointCloudFile;
-//            pointCloudFile.open(pointCloudFileName.str().c_str());
-//            if (!pointCloudFile.is_open())
-//            {
-//                PSL_THROW_EXCEPTION("Error opening VRML file for writing");
-//            }
-//            dM.pointCloudColoredToVRML(pointCloudFile,scaledRefImg);
-//            std::cout << "Saved : " << pointCloudFileName.str() << std::endl;
+            if(writePointClouds == "vrml") {
+              std::ostringstream pointCloudFileName;
+              pointCloudFileName << outDir << "/" << baseName << "_point_cloud.wrl";
+              std::ofstream pointCloudFile;
+              pointCloudFile.open(pointCloudFileName.str().c_str());
+              if (!pointCloudFile.is_open())
+              {
+                  PSL_THROW_EXCEPTION("Error opening VRML file for writing");
+              }
+              dM.pointCloudColoredToVRML(pointCloudFile,scaledRefImg);
+              std::cout << "Saved : " << pointCloudFileName.str() << std::endl;
+            }
+            //Convert to VTP and/or VTS file
+            else
+            {
+              vtkNew<vtkPoints> points;
+              points->SetNumberOfPoints(scaledRefImg.rows*scaledRefImg.cols);
 
-            //Convert to VTP file
+              vtkNew<vtkDoubleArray> uniquenessRatios;
+              uniquenessRatios->SetName("Uniqueness Ratios");
+              uniquenessRatios->SetNumberOfValues(scaledRefImg.rows*scaledRefImg.cols);
 
-            vtkNew<vtkPolyData> polydata;
-            vtkNew<vtkPoints> points;
+              vtkNew<vtkDoubleArray> bestCost;
+              bestCost->SetName("Best Cost Values");
+              bestCost->SetNumberOfValues(scaledRefImg.rows*scaledRefImg.cols);
 
-            polydata->SetPoints(points.Get());
-            points->SetNumberOfPoints(scaledRefImg.rows*scaledRefImg.cols);
+              vtkNew<vtkUnsignedCharArray> color;
+              color->SetName("Color");
+              color->SetNumberOfComponents(3);
+              color->SetNumberOfTuples(scaledRefImg.rows*scaledRefImg.cols);
 
-            vtkNew<vtkDoubleArray> uniquenessRatios;
-            uniquenessRatios->SetName("Uniqueness Ratios");
-            uniquenessRatios->SetNumberOfValues(scaledRefImg.rows*scaledRefImg.cols);
-            polydata->GetPointData()->AddArray(uniquenessRatios.Get());
+              PSL::Grid<float> costs = cPS.getBestCosts();
+              PSL::Grid<float> uRatios = cPS.getUniquenessRatios();
 
-            vtkNew<vtkDoubleArray> bestCost;
-            bestCost->SetName("Best Cost Values");
-            bestCost->SetNumberOfValues(scaledRefImg.rows*scaledRefImg.cols);
-            polydata->GetPointData()->AddArray(bestCost.Get());
+              for (int x = 0, pt_id = 0; x < dM.getWidth(); ++x) {
+                for (int y = 0; y < dM.getHeight(); ++y, pt_id++) {
+                  Eigen::Matrix<double, 4, 1> p = dM.unproject(x,y);
 
-            vtkNew<vtkUnsignedCharArray> color;
-            color->SetName("Color");
-            color->SetNumberOfComponents(3);
-            color->SetNumberOfTuples(scaledRefImg.rows*scaledRefImg.cols);
-            polydata->GetPointData()->AddArray(color.Get());
+                  points->SetPoint(pt_id,p(0,0),p(1,0),p(2,0));
+                  uniquenessRatios->SetValue(pt_id, uRatios(x,y));
+                  bestCost->SetValue(pt_id, costs(y,y));
 
+                  cv::Vec3b bgr = scaledRefImg.at<cv::Vec3b>(y,x);
+                  color->SetTuple3(pt_id,(int) bgr[2],(int) bgr[1],(int) bgr[0]);
+                }
+              }
 
-            PSL::Grid<float> costs = cPS.getBestCosts();
-            PSL::Grid<float> uRatios = cPS.getUniquenessRatios();
-            for (int x = 0, pt_id = 0; x < dM.getWidth(); ++x) {
-              for (int y = 0; y < dM.getHeight(); ++y, pt_id++) {
-                Eigen::Matrix<double, 4, 1> p = dM.unproject(x,y);
-                //Coord
-                points->SetPoint(pt_id,p(0,0),p(1,0),p(2,0));
-                uniquenessRatios->SetValue(pt_id, uRatios(x,y));
-                bestCost->SetValue(pt_id, costs(y,y));
-                cv::Vec3b bgr = scaledRefImg.at<cv::Vec3b>(y,x);
-                color->SetTuple3(pt_id,(int) bgr[2],(int) bgr[1],(int) bgr[0]);
+              //Writing polydata to the disk
+              if (writePointClouds == "vtp" || writePointClouds == "vtpvts") {
+                vtkNew<vtkPolyData> polydata;
+                polydata->SetPoints(points.Get());
+                polydata->GetPointData()->AddArray(uniquenessRatios.Get());
+                polydata->GetPointData()->AddArray(bestCost.Get());
+                polydata->GetPointData()->AddArray(color.Get());
+
+                vtkNew<vtkXMLPolyDataWriter> writerP;
+                std::string refFrame = static_cast<ostringstream*>( &(ostringstream() << refViewId/refViewStep) )->str();
+                std::string depthmapPolyFileName = outDir + "/"+ baseName + "_depth_map." + refFrame + ".vtp";
+
+                writerP->SetFileName(depthmapPolyFileName.c_str());
+                writerP->AddInputDataObject(polydata.Get());
+                writerP->SetDataModeToBinary();
+                writerP->Write();
+                std::cout << "Saved : " << depthmapPolyFileName << std::endl;
+              }
+
+              //Writing structured grid to the disk
+              if (writePointClouds == "vts" || writePointClouds == "vtpvts") {
+                vtkNew<vtkStructuredGrid> structuredGrid;
+                structuredGrid->SetDimensions(dM.getHeight(),dM.getWidth(),1);
+                structuredGrid->SetPoints(points.Get());
+                structuredGrid->GetPointData()->AddArray(uniquenessRatios.Get());
+                structuredGrid->GetPointData()->AddArray(bestCost.Get());
+                structuredGrid->GetPointData()->AddArray(color.Get());
+
+                vtkNew<vtkXMLStructuredGridWriter> writerG;
+                std::string refFrame = static_cast<ostringstream*>( &(ostringstream() << refViewId/refViewStep) )->str();
+                std::string depthmapGridFileName = outDir + "/"+ baseName + "_depth_map." + refFrame + ".vts";
+
+                writerG->SetFileName(depthmapGridFileName.c_str());
+                writerG->AddInputDataObject(structuredGrid.Get());
+                writerG->SetDataModeToBinary();
+                writerG->Write();
+                std::cout << "Saved : " << depthmapGridFileName << std::endl;
               }
             }
-          vtkNew<vtkXMLPolyDataWriter> writer;
-          std::string refFrame = static_cast<ostringstream*>( &(ostringstream() << refViewId/refViewStep) )->str();
-          std::string depthmapFileName = outDir + "/depthmap." + refFrame + ".vtp";
 
-          writer->SetFileName(depthmapFileName.c_str());
-          writer->AddInputDataObject(polydata.Get());
-          writer->SetDataModeToBinary();
-          writer->Write();
 
-        std::cout << "Saved : " << depthmapFileName << std::endl;
 
 
         }
