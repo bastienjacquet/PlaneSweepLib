@@ -1,0 +1,725 @@
+#include <boost/filesystem.hpp>
+#include <boost/timer.hpp>
+#include <boost/program_options.hpp>
+
+#include <iostream>
+#include <iomanip>
+#include <fstream>
+#include <vector>
+
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+
+#include <psl_base/cameraMatrix.h>
+#include <psl_stereo/cudaPlaneSweep.h>
+
+#include <cuda_gl_interop.h>
+#include <cuda_runtime_api.h>
+
+#include <vtkPoints.h>
+#include <vtkPointData.h>
+#include <vtkDoubleArray.h>
+#include <vtkUnsignedCharArray.h>
+#include <vtkPolyData.h>
+#include <vtkNew.h>
+#include <vtkXMLPolyDataWriter.h>
+
+bool overlapCompare(std::pair<int, float> p1, std::pair<int, float> p2)
+{
+    return p1.second > p2.second;
+}
+double cameraDirAngleCosine(PSL::CameraMatrix<double>  const & cam1,PSL::CameraMatrix<double> const & cam2){
+    Eigen::Vector4d dirHomo = cam1.unprojectPoint(cam1.getK()(0,2),cam1.getK()(1,2),1);
+    dirHomo/=dirHomo(3);
+    Eigen::Vector3d dir1(dirHomo(0),dirHomo(1),dirHomo(2));
+    dir1 -=  cam1.getC();
+    dir1.normalize();
+
+    Eigen::Vector4d dirHomo2 = cam2.unprojectPoint(cam2.getK()(0,2),cam2.getK()(1,2),1);
+    dirHomo2/=dirHomo2(3);
+    Eigen::Vector3d dir2(dirHomo2(0),dirHomo2(1),dirHomo2(2));
+    dir2 -= cam2.getC();
+    dir2.normalize();
+
+    return dir2.dot(dir1);
+}
+
+void makeOutputFolder(std::string folderName)
+{
+    if (!boost::filesystem::exists(folderName))
+    {
+        if (!boost::filesystem::create_directory(folderName))
+        {
+            std::stringstream errorMsg;
+            errorMsg << "Could not create output directory: " << folderName;
+            PSL_THROW_EXCEPTION(errorMsg.str().c_str());
+        }
+    }
+}
+
+int main(int argc, char* argv[])
+{
+    bool display = false;
+    std::string frameFolder;
+    std::string krtdFolder;
+    std::string landmarksPLY;
+    std::string outDir;
+    std::string configFile;
+    std::string imageListFile;
+    int view;
+    bool debug = true;
+    bool filter = false;
+    bool storeBestCostsAndUniquenessRatios = true;
+    bool writePointClouds = false;
+
+    // pose grouping parameters
+    int pGnumPlanes;
+    float pGScale;
+    float pGMinDepth;
+    float pGMaxDepth;
+
+    // plane sweep parameters
+    bool pSAutoRange;
+    float pSMinDepth=0,pSMaxDepth=0;
+//    if (!pSAutoRange){
+//        pSMinDepth = conf.getAsFloat("PS_MIN_DEPTH",true);
+//        pSMaxDepth = conf.getAsFloat("PS_MAX_DEPTH",true);
+//    }
+    int pSNumPlanes;
+    float pSRescaleFactor;
+
+    std::string pSMatchingCostsStr;
+
+    int pSMatchingWindowSize;
+
+    bool pSColorMatching;
+
+    std::string pSOcclusionModeStr;
+    int pSOcclusionBestKK;
+
+    bool psEnableSubPixel;
+
+    int pSMaxNumImages;
+
+    float costThreshold;
+    float thresholdUniq;
+
+    float minAngleDegree;
+
+    int refViewStep;
+
+    boost::program_options::options_description desc("Allowed options");
+    desc.add_options()
+            ("help", "Produce help message")
+            ("frameFolder", boost::program_options::value<std::string>(&frameFolder)->default_value("/home/louis/kw_house/frames_kw_house"), "Folders containing the frames.")
+            ("krtdFolder", boost::program_options::value<std::string>(&krtdFolder)->default_value("/home/louis/kw_house/krtd"), "Folders containing the .krtd files.")
+            ("landmarksPLY", boost::program_options::value<std::string>(&landmarksPLY)->default_value("maptk_config/ba_output_aligned/landmarks.ply"), "File containing the landmark points (to estimate where dense estimation should take place).")
+            ("imageListFile", boost::program_options::value<std::string>(&imageListFile)->default_value("/home/louis/kw_house/frames_1in3_60.txt"), "Image list file")
+//            ("configFile", boost::program_options::value<std::string>(&configFile)->default_value("conf3D.txt"), "Config file")
+            ("display",  boost::program_options::bool_switch(&display), "Display images and depth maps")
+            ("outputDirectory", boost::program_options::value<std::string>(&outDir)->default_value("depthMaps"), "Depth maps output directory")
+            ("filter", boost::program_options::bool_switch(&filter),"Filter the depths maps based on cost and uniqueness ratio")
+            ("debug", boost::program_options::bool_switch(&debug),"Show more debug informations")
+            ("view", boost::program_options::value<int>(&view)->default_value(-1), "View id to generate depthmap for. All if -1.")
+//            ("PG_NUM_PLANES", boost::program_options::value<int>(&pGnumPlanes)->default_value(-1), "Number of slices")
+//            ("PG_SCALE", boost::program_options::value<float>(&pGScale)->default_value(1.0), "Frame scale")
+//            ("PG_MIN_DEPTH", boost::program_options::value<float>(&pGMinDepth)->default_value(0.0), "Min depth")
+//            ("PG_MAX_DEPTH", boost::program_options::value<float>(&pGMaxDepth)->default_value(0.0), "Max depth")
+//            ("PS_AUTO_DEPTH", boost::program_options::bool_switch(&pSAutoRange),"Compute depth automatically, generate a bounding box")
+            ("PS_MIN_DEPTH", boost::program_options::value<float>(&pSMinDepth)->default_value(0.0), "Min depth")
+            ("PS_MAX_DEPTH", boost::program_options::value<float>(&pSMaxDepth)->default_value(0.0), "Min depth")
+            ("PS_NUM_PLANES", boost::program_options::value<int>(&pSNumPlanes)->default_value(100), "Number of slices")
+            ("PS_RESCALE_FACTOR", boost::program_options::value<float>(&pSRescaleFactor)->default_value(1.0), "Rescale factor")
+            ("PS_MATCHING_COSTS", boost::program_options::value<std::string>(&pSMatchingCostsStr)->default_value("SAD"), "Type of matching cost strategy [ZNCC or SAD]")
+            ("PS_MATCHING_WINDOW_SIZE", boost::program_options::value<int>(&pSMatchingWindowSize)->default_value(15), "Matching window size")
+            ("PS_COLOR_MATCHING", boost::program_options::bool_switch(&pSColorMatching),"Toggle color matching")
+            ("PS_OCCLUSION_MODE", boost::program_options::value<std::string>(&pSOcclusionModeStr)->default_value("None"), "Type of occlusion mode [None, BestK or RefSplit]")
+            ("PS_OCCLUSION_BEST_K_K", boost::program_options::value<int>(&pSOcclusionBestKK)->default_value(0), "Best K")
+            ("PS_USE_SUBPIXEL", boost::program_options::bool_switch(&psEnableSubPixel),"Toggle sub pixel computation")
+            ("PS_MAX_NUM_IMAGES", boost::program_options::value<int>(&pSMaxNumImages)->default_value(40), "Max number of images to use for plane sweep")
+            ("PS_COST_THRESHOLD", boost::program_options::value<float>(&costThreshold)->default_value(0.0), "Cost threshold. Only need if \"filter\" is toggled")
+            ("PS_UNIQUENESS_RATIO_THRESHOLD", boost::program_options::value<float>(&thresholdUniq)->default_value(0.5), "Uniqueness ratio threshold. Only need if \"filter\" is toggled")
+            ("PS_MIN_ANGLE_DEGREE", boost::program_options::value<float>(&minAngleDegree)->default_value(2.0), "Min angle degree between two frames")
+            ("ref_view_step", boost::program_options::value<int>(&refViewStep)->default_value(0), "Best K")
+
+
+            ("writePointClouds", boost::program_options::bool_switch(&writePointClouds), "Write point clouds in vrml format")
+           // ("storeBestCostsAndUniquenessRatios", boost::program_options::bool_switch(&storeBestCostsAndUniquenessRatios), "Store the best costs and the uniqueness ratios in dat files")
+            ;
+
+    boost::program_options::variables_map vm;
+    boost::program_options::store(boost::program_options::command_line_parser(argc, argv).options(desc).run(), vm);
+    boost::program_options::notify(vm);
+
+
+    if (vm.count("help"))
+    {
+        std::cout << desc << std::endl;
+        return 1;
+    }
+
+    boost::timer timer;
+
+    // config file
+//    PSL::ConfigFile conf(configFile);
+//    if (!conf.isFileRead())
+//    {
+//        PSL_THROW_EXCEPTION("Could not open config file.")
+//    }
+
+    PSL::PlaneSweepMatchingCosts pSMatchingCosts;
+    if (pSMatchingCostsStr == "ZNCC")
+    {
+        pSMatchingCosts = PSL::PLANE_SWEEP_ZNCC;
+    }
+    else if (pSMatchingCostsStr == "SAD")
+    {
+        pSMatchingCosts = PSL::PLANE_SWEEP_SAD;
+    }
+    else
+    {
+        PSL_THROW_EXCEPTION("For parameter PS_MATCHING_COSTS only ZNCC or SAD is allowed.")
+    }
+    PSL::PlaneSweepOcclusionMode pSOcclusionMode;
+    if (pSOcclusionModeStr == "None")
+    {
+        pSOcclusionMode = PSL::PLANE_SWEEP_OCCLUSION_NONE;
+    }
+    else if (pSOcclusionModeStr == "BestK")
+    {
+        pSOcclusionMode = PSL::PLANE_SWEEP_OCCLUSION_BEST_K;
+    }
+    else if (pSOcclusionModeStr == "RefSplit")
+    {
+        pSOcclusionMode = PSL::PLANE_SWEEP_OCCLUSION_REF_SPLIT;
+    }
+    else
+    {
+        PSL_THROW_EXCEPTION("For parameter PS_MATCHING_COSTS only None or BestK or RefSplit is allowed.")
+    }
+    std::cout << "Matching mode is "<< (pSOcclusionMode==PSL::PLANE_SWEEP_OCCLUSION_NONE ? "None":(pSOcclusionMode==PSL::PLANE_SWEEP_OCCLUSION_BEST_K ? "BestK":"RefSplit"))<<"..." << std::endl;
+
+
+
+//    bool sgm=conf.getAsInt("PS_USE_SGM",true);
+//    float sgmP1=0, sgmP2=0;
+//    if(sgm)
+//    {
+//        sgmP1=conf.getAsFloat("PS_SGM_P1",true);
+//        sgmP2=conf.getAsFloat("PS_SGM_P2",true);
+//    }
+
+//    if(filter)
+//    {
+//        costThreshold;
+//        thresholdUniq;
+//    }
+
+    float minAngleCosine = cos(minAngleDegree*M_PI/180.0);
+
+    // First we load the image filenames
+    std::ifstream imagesStream;
+    imagesStream.open(imageListFile.c_str());
+    if (!imagesStream.is_open())
+    {
+        PSL_THROW_EXCEPTION(std::string("Could not load images list file : "+imageListFile).c_str())
+    }
+    std::vector<std::string> imageFileNames;
+    {
+        std::string imageFileName;
+        while (imagesStream >> imageFileName)
+        {
+            imageFileNames.push_back(imageFileName);
+        }
+    }
+    int numCameras = imageFileNames.size();
+    std::cout << numCameras << " filenames found in "<< imageListFile << std::endl;
+
+    // Load the poses file
+    // Poses are computed with MAP-Tk
+    std::map<int, PSL::CameraMatrix<double> > cameras;
+    for (int c = 0; c < numCameras; c++)
+    {
+        int id = c;
+        // get filename
+        std::string krtdMatrixFileName = imageFileNames[c];
+        {
+            std::string krtdExt = "krtd";
+            size_t start_pos = krtdMatrixFileName.find(".");
+            if(start_pos == std::string::npos)
+                 PSL_THROW_EXCEPTION(("Could not generate krt filename, no '.' found in "+krtdMatrixFileName).c_str())
+            krtdMatrixFileName.replace(start_pos + 1, krtdMatrixFileName.length()-start_pos, krtdExt);
+        }
+        std::string krtdMatrixFile = krtdFolder + "/" + krtdMatrixFileName;
+        // try to load k, r, t matrices
+        std::ifstream krtdMatrixStr;
+        krtdMatrixStr.open(krtdMatrixFile.c_str());
+        if (!krtdMatrixStr.is_open())
+        {
+            PSL_THROW_EXCEPTION(("Error opening KRT matrix file : "+imageListFile).c_str())
+        }
+
+        Eigen::Matrix3d K = Eigen::Matrix3d::Identity();
+        krtdMatrixStr >> K(0,0) >> K(0,1) >> K(0,2);
+        krtdMatrixStr >> K(1,0) >> K(1,1) >> K(1,2);
+        krtdMatrixStr >> K(2,0) >> K(2,1) >> K(2,2);
+        //std::cout << K << std::endl;
+
+        Eigen::Matrix<double, 3, 3> R;
+        Eigen::Matrix<double, 3, 1> T;
+
+        for (int i = 0; i < 3; i++)
+        {
+            for (int j = 0; j < 3; j++)
+                krtdMatrixStr >> R(i,j);
+
+        }
+        for (int i = 0; i < 3; i++)
+            krtdMatrixStr >> T(i);
+
+        //std::cout << R << std::endl;
+        //std::cout << T << std::endl;
+
+        Eigen::Matrix<double, 3, 1> d;
+        for (int i = 0; i < 3; i++)
+            krtdMatrixStr >> d(i);  
+
+        cameras[id].setKRT(K, R, T);
+    }
+    std::cout << "Cameras KRT have been loaded." << std::endl;
+
+    // The reconstructions are not metric. In order to have an idea about the scale
+    // we compute the average distance between the cameras.
+    double avgDistance = 0, maxDistance=0;
+    int numDistances = 0;
+    for (unsigned int i = 0; i < imageFileNames.size()-1; i++)
+    {
+        if (cameras.count(i) == 1)
+        {
+            for (unsigned int j = i + 1; j < imageFileNames.size(); j++)
+            {
+                if (cameras.count(j) == 1)
+                {
+                    Eigen::Vector3d distance = cameras[i].getC() - cameras[j].getC();
+                    double d = distance.norm();
+                    avgDistance += d;
+                    maxDistance = std::max(maxDistance,d);
+                    numDistances++;
+                }
+            }
+        }
+    }
+    if (numDistances < 2)
+    {
+        PSL_THROW_EXCEPTION("Could not compute average distance, less than two cameras found");
+    }
+    avgDistance /= numDistances;
+    std::cout << "Cameras have an average distance of " << avgDistance << " and a max distance of " << maxDistance <<  "." << std::endl;
+    float minZ = (float) (2.5f*avgDistance);
+    float maxZ = (float) (100.0f*avgDistance);
+
+    // Loading the PLY point could
+//    cv::Mat bbox_mean;
+//    float pointCloudRadius;
+//    if (pSAutoRange) {
+//        pcl::PointCloud<pcl::PointSurfel> dense_point_cloud;
+//        pcl::PointSurfel dense_bbox_min;
+//        pcl::PointSurfel dense_bbox_max;
+//        pcl::PLYReader ply_reader;
+//        ply_reader.read(landmarksPLY, dense_point_cloud);
+//        pcl::getMinMax3D(dense_point_cloud, dense_bbox_min, dense_bbox_max);
+//        cv::Mat bbox_min = (cv::Mat_<float>(4,1) << dense_bbox_min.x, dense_bbox_min.y, dense_bbox_min.z, 1);
+//        cv::Mat bbox_max = (cv::Mat_<float>(4,1) << dense_bbox_max.x, dense_bbox_max.y, dense_bbox_max.z, 1);
+//        bbox_mean = (bbox_min + bbox_max) /2.0;
+//        pointCloudRadius = norm((bbox_min - bbox_max) /2.0);
+//        std::cout << "The point cloud is centered in  " << bbox_mean << ", with radius : " << pointCloudRadius << std::endl;
+//    }
+
+    int imageWidth=1920;
+    int imageHeight=1080;
+    std::cout<< "Images are assumed to be " << imageWidth << "x"<< imageHeight <<std::endl;
+
+//    PSL::CameraPoseGrouper cPG;
+//    cPG.setNumPlanes(pGnumPlanes);
+//    cPG.setScale(pGScale);
+//    cPG.setSize(imageWidth, imageHeight);
+//    cPG.setViewingRange(pGMinDepth, pGMaxDepth);
+
+//    for (std::map<int, PSL::CameraMatrix<double> >::iterator it = cameras.begin(); it != cameras.end(); it++)
+//    {
+//        cPG.addCamera(it->first, it->second);
+//    }
+
+    makeOutputFolder(outDir);
+
+    int count = 0;
+    for (std::map<int, PSL::CameraMatrix<double> >::iterator it = cameras.begin(); it != cameras.end(); std::advance(it, refViewStep), count++)
+    {
+        // if we want a specific ref view, go for it.
+        if(view>=0 && it->first!=view) continue;
+        const int refViewId = it->first;
+        timer.restart();
+        std::cout << "Find overlaps for ref cam: " << refViewId << "..." << std::endl;
+        std::vector<std::pair<int, float> > overlaps;
+        //cPG.computeOverlaps(it->first, overlaps);
+        std::cout << "WARNING Overlap prior is small angle for now." << std::endl;
+        for (int i = 0; i < cameras.size(); ++i) {
+            if(i!=it->first) overlaps.push_back(std::make_pair(i,
+                                                               cameraDirAngleCosine(cameras[refViewId],cameras[i])
+                                                               ));
+        }
+        std::sort(overlaps.begin(), overlaps.end(), overlapCompare);
+
+        std::cout << " done in " << timer.elapsed() << " seconds." << std::endl;
+        std::cout << " Best overlapping cams in descending order: ";
+        for (unsigned int j = 0; j < overlaps.size(); j++)
+        {
+            std::cout << overlaps[j].first << " ";
+        }
+        std::cout << std::endl;
+
+        timer.restart();
+        std::cout << "Setting up cuda plane sweep and upload images..." << std::endl;
+        PSL::CudaPlaneSweep cPS;
+        cPS.setScale(pSRescaleFactor);
+        if (debug) std::cout << "  pSRescaleFactor " << pSRescaleFactor <<  std::endl;
+        cPS.setMatchWindowSize(pSMatchingWindowSize,pSMatchingWindowSize);
+        if (debug) std::cout << "  pSMatchingWindowSize " << pSMatchingWindowSize <<  std::endl;
+        cPS.setNumPlanes(pSNumPlanes);
+        if (debug) std::cout << "  pSNumPlanes " << pSNumPlanes <<  std::endl;
+        cPS.setOcclusionMode(pSOcclusionMode);
+        if (debug) std::cout << "  pSOcclusionMode " << pSOcclusionMode <<  std::endl;
+        if (pSOcclusionMode == PSL::PLANE_SWEEP_OCCLUSION_BEST_K){
+            cPS.setOcclusionBestK(pSOcclusionBestKK);
+            if (debug) std::cout << "  pSOcclusionBestKK " << pSOcclusionBestKK <<  std::endl;
+        }
+        cPS.setMatchingCosts(pSMatchingCosts);
+        if (debug) std::cout << "  pSMatchingCosts " << pSMatchingCosts <<  std::endl;
+        cPS.setPlaneGenerationMode(PSL::PLANE_SWEEP_PLANEMODE_UNIFORM_DISPARITY);
+        cPS.setSubPixelInterpolationMode(PSL::PLANE_SWEEP_SUB_PIXEL_INTERP_INVERSE);
+        cPS.enableSubPixel(psEnableSubPixel);
+        cPS.enableColorMatching(pSColorMatching);
+        if (debug) std::cout << "  pSColorMatching " << pSColorMatching <<  std::endl;
+//        if (pSAutoRange) {
+//            float meanZ = cameras[refViewId].getR()(2,0)*bbox_mean.at<float>(0) +
+//                    cameras[refViewId].getR()(2,1)*bbox_mean.at<float>(1) +
+//                    cameras[refViewId].getR()(2,2)*bbox_mean.at<float>(2) +
+//                    cameras[refViewId].getT()[2];
+//            maxZ  = meanZ + pointCloudRadius;
+//            minZ  = meanZ - pointCloudRadius;
+//        }else{
+            maxZ  = pSMaxDepth;
+            minZ  = pSMinDepth;
+//        }
+        cPS.setZRange(minZ, maxZ);
+        if (debug) std::cout << "  Z range :  " << minZ << "  - " << maxZ <<  std::endl;
+
+        /* Per view robust Z range computation
+        if (pSAutoRange)
+        {
+            // Compute near and far range.
+            double nearZ,farZ;
+            std::vector<float> zs;
+            for(unsigned int i=0; i<sparsePts.size(); i++) {
+                Eigen::Vector3d x = (it->second.getR()*sparsePts[i] + it->second.getT());
+                Eigen::Vector3d px= 1.0/x[2]*(K*x);
+                if(x[2]>0 && px[0]>0 && px[0]<imageWidth && px[1]>0 && px[1]<imageHeight)
+                    zs.push_back(x[2]);
+            }
+            sort(zs.begin(),zs.end());
+            const double outlierThres=0.05;
+            double safeness_margin_factor=0.33;
+            if (zs.size()){
+                nearZ = zs[(int)((zs.size()-1)*outlierThres)];
+                farZ = zs[(int)((zs.size()-1)*(1-outlierThres))];
+                std::cout<<"    distances from camera are "<<zs[0]<<"->"<<zs[zs.size()-1]<<" ("<< zs.size()<<" visible points)"<<std::endl;
+                std::cout<<"    distances ["<<outlierThres*100<<"%->"<<(1.0-outlierThres)*100<<"%] are "<<nearZ<<"->"<<farZ<<std::endl;
+                nearZ *= (1-safeness_margin_factor);
+                farZ *= (1+safeness_margin_factor);
+                std::cout<<"    planes will be "<<nearZ<<"->"<<farZ<<" by "<<(farZ-nearZ)/pSNumPlanes<<" increment"<<std::endl;
+                pSMinDepth=nearZ;
+                pSMaxDepth=farZ;
+                cPS.setZRange(nearZ, farZ);
+            }else {
+                std::cout<<"    NO VISIBLE POINTS, demoting to depths from config file : "<<pSMinDepth<<"->"<< pSMaxDepth<<" ."<<std::endl;
+
+            }
+        }
+        */
+//        if (sgm) cPS.enableOutputCostVolume();
+
+        if ((filter || storeBestCostsAndUniquenessRatios)/* && !sgm*/)
+        {
+            cPS.enableOutputBestCosts();
+            cPS.enableOuputUniquenessRatio();
+        }
+
+        if (!((unsigned int) it->first < imageFileNames.size()))
+        {
+            PSL_THROW_EXCEPTION("Reference camera image not in image list")
+        }
+        std::string refImgFileName = frameFolder + "/" + imageFileNames[it->first];
+        std::string baseName = PSL::extractBaseFileName(refImgFileName);
+        cv::Mat refImg = cv::imread(refImgFileName);
+        if (refImg.empty())
+            PSL_THROW_EXCEPTION(("Failed to load image : "+refImgFileName).c_str())
+//        if (display)
+//        {
+//            PSL::displayImageScaled(refImg, pSRescaleFactor, "refImg", 20);
+//        }
+
+        PSL::CameraMatrix<double>const & refCam = it->second;
+        int numMatchingImages = 0;
+        std::vector<int> selectedImg;
+        for (int j = 0; j < overlaps.size(); j++)
+        {
+            if ( numMatchingImages >= pSMaxNumImages )
+                continue;
+            const int viewJ=overlaps[j].first;
+            double cosine = cameraDirAngleCosine(refCam,cameras[viewJ]);
+            if(cosine < minAngleCosine)
+            {
+                selectedImg.push_back(viewJ);
+                numMatchingImages++;
+            }
+        }
+
+        selectedImg.push_back(it->first);
+        int cPSRef;
+        std::sort(selectedImg.begin(), selectedImg.end());
+        for (int j = 0; j < selectedImg.size(); j++){
+            const int viewJ=selectedImg[j];
+            std::string imageFileName = frameFolder + "/" + imageFileNames[viewJ];
+            //std::cout << "Loading image : " << imageFileName << std::endl;
+            cv::Mat img = cv::imread(imageFileName);
+//            if (display)
+//                PSL::displayImageScaled(img, pSRescaleFactor, "img", 15);
+            int cudaID=cPS.addImage(img, cameras[viewJ]);
+            if(viewJ==it->first)
+                cPSRef=cudaID;
+            if (debug) std::cout << "Loaded image : " << imageFileName << std::endl;
+        }
+        std::cout<<" Found "<<numMatchingImages<<" matching images (Angle>"<<180.0/M_PI*acos(minAngleCosine)<<" degrees)" << std::endl;
+        std::cout << " done in " << timer.elapsed() << " seconds." << std::endl;
+
+        if (pSOcclusionMode==PSL::PLANE_SWEEP_OCCLUSION_BEST_K && numMatchingImages < pSOcclusionBestKK)
+        {
+            std::cout << "WARNING: skipped reference image " << it->first << " because there where not enough matching images for given best K, K." << std::endl;
+            continue;
+        }
+        if (pSOcclusionMode==PSL::PLANE_SWEEP_OCCLUSION_REF_SPLIT){
+            std::vector<int>::iterator p = std::find (selectedImg.begin(), selectedImg.end(), it->first);
+            int numBefore = p-selectedImg.begin();
+            int numAfter = selectedImg.size() - numBefore;
+            if( std::min(numBefore,numAfter)<(numMatchingImages/4))
+                cPS.setOcclusionMode(PSL::PLANE_SWEEP_OCCLUSION_NONE);
+        }
+        timer.restart();
+        std::cout << "Running cuda plane sweep... cPSRef = " << cPSRef << std::endl;
+        cPS.process(cPSRef);
+        std::cout << " done in " << timer.elapsed() << " seconds." << std::endl;
+
+        PSL::DepthMap<float, double> dM;
+//        if(sgm)
+//        {
+//            PSL::SemiGlobalMatching sGM(sgmP1,sgmP2);
+//            PSL::Grid<float> costVolume=cPS.getCostVolume();
+//            sGM.enableOutputDepthMap();
+//            sGM.enableOutputCostsEnabled();
+//            sGM.enableOutputUniquenessRatios();
+
+//            PSL::Grid<Eigen::Vector4d> planes = cPS.getPlanes();
+//            PSL::CameraMatrix<double> refCamScaled = refCam;
+//            refCamScaled.scaleK(pSRescaleFactor, pSRescaleFactor);
+//            sGM.matchFromPlaneSweep(costVolume,planes,refCamScaled);
+//            dM=sGM.getDepthMap();
+
+
+//            if(filter || storeBestCostsAndUniquenessRatios)
+//            {
+//                PSL::Grid<float> costs = sGM.getCosts();
+//                PSL::Grid<float> uniquenessRatios = sGM.getUniquenessRatios();
+
+//                if (storeBestCostsAndUniquenessRatios)
+//                {
+//                    std::ostringstream uniqunessFileName;
+//                    std::ostringstream bestCostFileName;
+
+//                    uniqunessFileName << outDir << "/" << baseName << "_uniquenessRatios.dat";
+//                    uniquenessRatios.saveAsDataFile(uniqunessFileName.str());
+
+//                    bestCostFileName << outDir << "/" << baseName << "_bestCosts.dat";
+//                    costs.saveAsDataFile(bestCostFileName.str());
+
+//                    std::ostringstream bestCostImgFileName;
+//                    bestCostImgFileName << outDir << "/" << baseName << "_bestCosts.jpg";
+//                    PSL::saveGridZSliceAsImage(costs, 0, 0.0f, 1.0f, bestCostImgFileName.str().c_str());
+
+//                    std::ostringstream uniqunessImgFileName;
+//                    uniqunessImgFileName << outDir << "/" << baseName << "_uniquenessRatios.jpg";
+//                    PSL::saveGridZSliceAsImage(uniquenessRatios, 0, 0.8f, 1.0f, uniqunessImgFileName.str().c_str());
+//                }
+
+//                if (filter)
+//                {
+//                int w = dM.getWidth(); int h = dM.getHeight();
+//                for(int y = 0; y<h; ++y)
+//                    for(int x = 0; x<w; ++x)
+//                    {
+//                        if(costs(x,y)>costThreshold || uniquenessRatios(x,y) > thresholdUniq)
+//                            dM(x,y)=-1;
+//                    }
+//                }
+//            }
+//        }
+//        else
+        {
+            std::cout << "Download best depths..." << std::endl;
+            dM=cPS.getBestDepth();
+            std::cout << "done." << std::endl;
+            if (filter || storeBestCostsAndUniquenessRatios)
+            {
+                std::cout << "Download best costs and uniqueness ratios..." << std::endl;
+                PSL::Grid<float> costs = cPS.getBestCosts();
+                PSL::Grid<float> uniquenessRatios = cPS.getUniquenessRatios();
+
+                std::cout << "done." << std::endl;
+
+                if (storeBestCostsAndUniquenessRatios)
+                {
+                    std::ostringstream uniqunessFileName;
+                    std::ostringstream bestCostFileName;
+                    std::ostringstream bestCostImgFileName;
+
+                    uniqunessFileName << outDir << "/" << baseName << "_uniquenessRatios.dat";
+                    uniquenessRatios.saveAsDataFile(uniqunessFileName.str());
+
+                    bestCostImgFileName << outDir << "/" << baseName << "_bestCosts.jpg";
+                    PSL::saveGridZSliceAsImage(costs, 0, 0.0f, 1.0f, bestCostImgFileName.str().c_str());
+
+                    bestCostFileName << outDir << "/" << baseName << "_bestCosts.dat";
+                    costs.saveAsDataFile(bestCostFileName.str());
+
+                    std::ostringstream uniqunessImgFileName;
+                    uniqunessImgFileName << outDir << "/" << baseName << "_uniquenessRatios.jpg";
+                    PSL::saveGridZSliceAsImage(uniquenessRatios, 0, 0.8f, 1.0f, uniqunessImgFileName.str().c_str());
+                }
+
+                if (filter)
+                {
+
+
+                    int w = dM.getWidth(); int h = dM.getHeight();
+                    for (int y = 0; y < h; y++)
+                    {
+                        for(int x = 0; x<w; ++x)
+                        {
+                          std::cout << "costs(x,y) = " << costs(x,y) <<std::endl;
+                            if(costs(x,y)>costThreshold ||
+                               uniquenessRatios(x,y) > thresholdUniq)
+                                dM(x,y)=-1;
+                        }
+                    }
+                }
+            }
+        }
+
+        std::ostringstream fileNameData;
+        fileNameData << outDir << "/" << baseName << "_depth_map.dat";
+        dM.saveAsDataFile(fileNameData.str());
+        std::cout << "Saved : " << fileNameData.str() << std::endl;
+        std::ostringstream fileNameImg;
+        fileNameImg << outDir << "/" << baseName << "_inv_depth_map.jpg";
+        dM.saveInvDepthAsColorImage(fileNameImg.str(), minZ, maxZ);
+        std::cout << "Saved : " << fileNameImg.str() << std::endl;
+
+        if (writePointClouds)
+        {
+            // scale refImg
+
+            cv::Mat scaledRefImg;
+
+            if (pSRescaleFactor != 1)
+            {
+                // scale image
+                if (pSRescaleFactor < 1)
+                    resize(refImg, scaledRefImg, cv::Size(0,0), pSRescaleFactor, pSRescaleFactor, cv::INTER_AREA);
+                else
+                    resize(refImg, scaledRefImg, cv::Size(0,0) , pSRescaleFactor, pSRescaleFactor, cv::INTER_LINEAR);
+            }
+            else
+            {
+                scaledRefImg = refImg.clone();
+            }
+
+            //TODO: Add an option allowing to choose between VRML and VTP file
+            //Convert to VRML file
+//            std::ostringstream pointCloudFileName;
+//            pointCloudFileName << outDir << "/" << baseName << "_point_cloud.wrl";
+//            std::ofstream pointCloudFile;
+//            pointCloudFile.open(pointCloudFileName.str().c_str());
+//            if (!pointCloudFile.is_open())
+//            {
+//                PSL_THROW_EXCEPTION("Error opening VRML file for writing");
+//            }
+//            dM.pointCloudColoredToVRML(pointCloudFile,scaledRefImg);
+//            std::cout << "Saved : " << pointCloudFileName.str() << std::endl;
+
+            //Convert to VTP file
+
+            vtkNew<vtkPolyData> polydata;
+            vtkNew<vtkPoints> points;
+
+            polydata->SetPoints(points.Get());
+            points->SetNumberOfPoints(scaledRefImg.rows*scaledRefImg.cols);
+
+            vtkNew<vtkDoubleArray> uniquenessRatios;
+            uniquenessRatios->SetName("Uniqueness Ratios");
+            uniquenessRatios->SetNumberOfValues(scaledRefImg.rows*scaledRefImg.cols);
+            polydata->GetPointData()->AddArray(uniquenessRatios.Get());
+
+            vtkNew<vtkDoubleArray> bestCost;
+            bestCost->SetName("Best Cost Values");
+            bestCost->SetNumberOfValues(scaledRefImg.rows*scaledRefImg.cols);
+            polydata->GetPointData()->AddArray(bestCost.Get());
+
+            vtkNew<vtkUnsignedCharArray> color;
+            color->SetName("Color");
+            color->SetNumberOfComponents(3);
+            color->SetNumberOfTuples(scaledRefImg.rows*scaledRefImg.cols);
+            polydata->GetPointData()->AddArray(color.Get());
+
+
+            PSL::Grid<float> costs = cPS.getBestCosts();
+            PSL::Grid<float> uRatios = cPS.getUniquenessRatios();
+            for (int x = 0, pt_id = 0; x < dM.getWidth(); ++x) {
+              for (int y = 0; y < dM.getHeight(); ++y, pt_id++) {
+                Eigen::Matrix<double, 4, 1> p = dM.unproject(x,y);
+                //Coord
+                points->SetPoint(pt_id,p(0,0),p(1,0),p(2,0));
+                uniquenessRatios->SetValue(pt_id, uRatios(x,y));
+                bestCost->SetValue(pt_id, costs(y,y));
+                cv::Vec3b bgr = scaledRefImg.at<cv::Vec3b>(y,x);
+                color->SetTuple3(pt_id,(int) bgr[2],(int) bgr[1],(int) bgr[0]);
+              }
+            }
+          vtkNew<vtkXMLPolyDataWriter> writer;
+          std::string refFrame = static_cast<ostringstream*>( &(ostringstream() << refViewId/refViewStep) )->str();
+          std::string depthmapFileName = outDir + "/depthmap." + refFrame + ".vtp";
+
+          writer->SetFileName(depthmapFileName.c_str());
+          writer->AddInputDataObject(polydata.Get());
+          writer->SetDataModeToBinary();
+          writer->Write();
+
+        std::cout << "Saved : " << depthmapFileName << std::endl;
+
+
+        }
+
+        if (display)
+            dM.displayInvDepthColored(pSMinDepth, pSMaxDepth, 20);
+
+        std::cout << std::endl;
+    }
+}
