@@ -170,10 +170,11 @@ int main(int argc, char* argv[])
     }
 
     avgDistance /= numDistances;
+    std::cout << "Cameras have an average distance of " << avgDistance << "." << std::endl;
 
     float minZ = (float) (2.5f*avgDistance);
     float maxZ = (float) (100.0f*avgDistance);
-
+    std::cout << "  Z range :  " << minZ << "  - " << maxZ <<  std::endl;
     makeOutputFolder("pinholeTestResults");
 
     // First tests compute a depth map for the middle image of the first row
