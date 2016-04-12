@@ -126,11 +126,6 @@ int main(int argc, char* argv[])
             ("filter", boost::program_options::bool_switch(&filter),"Filter the depths maps based on cost and uniqueness ratio")
             ("debug", boost::program_options::bool_switch(&debug),"Show more debug informations")
             ("view", boost::program_options::value<int>(&view)->default_value(-1), "View id to generate depthmap for. All if -1.")
-//            ("PG_NUM_PLANES", boost::program_options::value<int>(&pGnumPlanes)->default_value(-1), "Number of slices")
-//            ("PG_SCALE", boost::program_options::value<float>(&pGScale)->default_value(1.0), "Frame scale")
-//            ("PG_MIN_DEPTH", boost::program_options::value<float>(&pGMinDepth)->default_value(0.0), "Min depth")
-//            ("PG_MAX_DEPTH", boost::program_options::value<float>(&pGMaxDepth)->default_value(0.0), "Max depth")
-//            ("PS_AUTO_DEPTH", boost::program_options::bool_switch(&pSAutoRange),"Compute depth automatically, generate a bounding box")
             ("PS_MIN_DEPTH", boost::program_options::value<float>(&pSMinDepth)->default_value(0.0), "Min depth")
             ("PS_MAX_DEPTH", boost::program_options::value<float>(&pSMaxDepth)->default_value(0.0), "Min depth")
             ("PS_NUM_PLANES", boost::program_options::value<int>(&pSNumPlanes)->default_value(100), "Number of slices")
@@ -165,13 +160,6 @@ int main(int argc, char* argv[])
 
     boost::timer timer;
 
-    // config file
-//    PSL::ConfigFile conf(configFile);
-//    if (!conf.isFileRead())
-//    {
-//        PSL_THROW_EXCEPTION("Could not open config file.")
-//    }
-
     PSL::PlaneSweepMatchingCosts pSMatchingCosts;
     if (pSMatchingCostsStr == "ZNCC")
     {
@@ -203,22 +191,6 @@ int main(int argc, char* argv[])
         PSL_THROW_EXCEPTION("For parameter PS_MATCHING_COSTS only None or BestK or RefSplit is allowed.")
     }
     std::cout << "Matching mode is "<< (pSOcclusionMode==PSL::PLANE_SWEEP_OCCLUSION_NONE ? "None":(pSOcclusionMode==PSL::PLANE_SWEEP_OCCLUSION_BEST_K ? "BestK":"RefSplit"))<<"..." << std::endl;
-
-
-
-//    bool sgm=conf.getAsInt("PS_USE_SGM",true);
-//    float sgmP1=0, sgmP2=0;
-//    if(sgm)
-//    {
-//        sgmP1=conf.getAsFloat("PS_SGM_P1",true);
-//        sgmP2=conf.getAsFloat("PS_SGM_P2",true);
-//    }
-
-//    if(filter)
-//    {
-//        costThreshold;
-//        thresholdUniq;
-//    }
 
     float minAngleCosine = cos(minAngleDegree*M_PI/180.0);
 
@@ -323,38 +295,9 @@ int main(int argc, char* argv[])
     float minZ = (float) (2.5f*avgDistance);
     float maxZ = (float) (100.0f*avgDistance);
 
-    // Loading the PLY point could
-//    cv::Mat bbox_mean;
-//    float pointCloudRadius;
-//    if (pSAutoRange) {
-//        pcl::PointCloud<pcl::PointSurfel> dense_point_cloud;
-//        pcl::PointSurfel dense_bbox_min;
-//        pcl::PointSurfel dense_bbox_max;
-//        pcl::PLYReader ply_reader;
-//        ply_reader.read(landmarksPLY, dense_point_cloud);
-//        pcl::getMinMax3D(dense_point_cloud, dense_bbox_min, dense_bbox_max);
-//        cv::Mat bbox_min = (cv::Mat_<float>(4,1) << dense_bbox_min.x, dense_bbox_min.y, dense_bbox_min.z, 1);
-//        cv::Mat bbox_max = (cv::Mat_<float>(4,1) << dense_bbox_max.x, dense_bbox_max.y, dense_bbox_max.z, 1);
-//        bbox_mean = (bbox_min + bbox_max) /2.0;
-//        pointCloudRadius = norm((bbox_min - bbox_max) /2.0);
-//        std::cout << "The point cloud is centered in  " << bbox_mean << ", with radius : " << pointCloudRadius << std::endl;
-//    }
-
     int imageWidth=1920;
     int imageHeight=1080;
     std::cout<< "Images are assumed to be " << imageWidth << "x"<< imageHeight <<std::endl;
-
-//    PSL::CameraPoseGrouper cPG;
-//    cPG.setNumPlanes(pGnumPlanes);
-//    cPG.setScale(pGScale);
-//    cPG.setSize(imageWidth, imageHeight);
-//    cPG.setViewingRange(pGMinDepth, pGMaxDepth);
-
-//    for (std::map<int, PSL::CameraMatrix<double> >::iterator it = cameras.begin(); it != cameras.end(); it++)
-//    {
-//        cPG.addCamera(it->first, it->second);
-//    }
-
     makeOutputFolder(outDir);
 
     int count = 0;
@@ -362,19 +305,12 @@ int main(int argc, char* argv[])
     std::ofstream filenameListvtp("vtpList.txt");
     for (std::map<int, PSL::CameraMatrix<double> >::iterator it = cameras.begin(); it != cameras.end(); std::advance(it, refViewStep), count++)
     {
-//        if (writePointClouds == "vts" || writePointClouds == "vtpvts") {
-//        }
-//        if (writePointClouds == "vtp" || writePointClouds == "vtpvts") {
-//        }
-
-
         // if we want a specific ref view, go for it.
         if(view>=0 && it->first!=view) continue;
         const int refViewId = it->first;
         timer.restart();
         std::cout << "Find overlaps for ref cam: " << refViewId << "..." << std::endl;
         std::vector<std::pair<int, float> > overlaps;
-        //cPG.computeOverlaps(it->first, overlaps);
         std::cout << "WARNING Overlap prior is small angle for now." << std::endl;
         for (int i = 0; i < cameras.size(); ++i) {
             if(i!=it->first) overlaps.push_back(std::make_pair(i,
@@ -413,53 +349,11 @@ int main(int argc, char* argv[])
         cPS.enableSubPixel(psEnableSubPixel);
         cPS.enableColorMatching(pSColorMatching);
         if (debug) std::cout << "  pSColorMatching " << pSColorMatching <<  std::endl;
-//        if (pSAutoRange) {
-//            float meanZ = cameras[refViewId].getR()(2,0)*bbox_mean.at<float>(0) +
-//                    cameras[refViewId].getR()(2,1)*bbox_mean.at<float>(1) +
-//                    cameras[refViewId].getR()(2,2)*bbox_mean.at<float>(2) +
-//                    cameras[refViewId].getT()[2];
-//            maxZ  = meanZ + pointCloudRadius;
-//            minZ  = meanZ - pointCloudRadius;
-//        }else{
             maxZ  = pSMaxDepth;
             minZ  = pSMinDepth;
-//        }
+
         cPS.setZRange(minZ, maxZ);
         if (debug) std::cout << "  Z range :  " << minZ << "  - " << maxZ <<  std::endl;
-
-        /* Per view robust Z range computation
-        if (pSAutoRange)
-        {
-            // Compute near and far range.
-            double nearZ,farZ;
-            std::vector<float> zs;
-            for(unsigned int i=0; i<sparsePts.size(); i++) {
-                Eigen::Vector3d x = (it->second.getR()*sparsePts[i] + it->second.getT());
-                Eigen::Vector3d px= 1.0/x[2]*(K*x);
-                if(x[2]>0 && px[0]>0 && px[0]<imageWidth && px[1]>0 && px[1]<imageHeight)
-                    zs.push_back(x[2]);
-            }
-            sort(zs.begin(),zs.end());
-            const double outlierThres=0.05;
-            double safeness_margin_factor=0.33;
-            if (zs.size()){
-                nearZ = zs[(int)((zs.size()-1)*outlierThres)];
-                farZ = zs[(int)((zs.size()-1)*(1-outlierThres))];
-                std::cout<<"    distances from camera are "<<zs[0]<<"->"<<zs[zs.size()-1]<<" ("<< zs.size()<<" visible points)"<<std::endl;
-                std::cout<<"    distances ["<<outlierThres*100<<"%->"<<(1.0-outlierThres)*100<<"%] are "<<nearZ<<"->"<<farZ<<std::endl;
-                nearZ *= (1-safeness_margin_factor);
-                farZ *= (1+safeness_margin_factor);
-                std::cout<<"    planes will be "<<nearZ<<"->"<<farZ<<" by "<<(farZ-nearZ)/pSNumPlanes<<" increment"<<std::endl;
-                pSMinDepth=nearZ;
-                pSMaxDepth=farZ;
-                cPS.setZRange(nearZ, farZ);
-            }else {
-                std::cout<<"    NO VISIBLE POINTS, demoting to depths from config file : "<<pSMinDepth<<"->"<< pSMaxDepth<<" ."<<std::endl;
-
-            }
-        }
-        */
-//        if (sgm) cPS.enableOutputCostVolume();
 
         if ((filter || storeBestCostsAndUniquenessRatios)/* && !sgm*/)
         {
@@ -476,10 +370,6 @@ int main(int argc, char* argv[])
         cv::Mat refImg = cv::imread(refImgFileName);
         if (refImg.empty())
             PSL_THROW_EXCEPTION(("Failed to load image : "+refImgFileName).c_str())
-//        if (display)
-//        {
-//            PSL::displayImageScaled(refImg, pSRescaleFactor, "refImg", 20);
-//        }
 
         PSL::CameraMatrix<double>const & refCam = it->second;
         int numMatchingImages = 0;
@@ -503,10 +393,9 @@ int main(int argc, char* argv[])
         for (int j = 0; j < selectedImg.size(); j++){
             const int viewJ=selectedImg[j];
             std::string imageFileName = frameFolder + "/" + imageFileNames[viewJ];
-            //std::cout << "Loading image : " << imageFileName << std::endl;
+
             cv::Mat img = cv::imread(imageFileName);
-//            if (display)
-//                PSL::displayImageScaled(img, pSRescaleFactor, "img", 15);
+
             int cudaID=cPS.addImage(img, cameras[viewJ]);
             if(viewJ==it->first)
                 cPSRef=cudaID;
@@ -533,59 +422,6 @@ int main(int argc, char* argv[])
         std::cout << " done in " << timer.elapsed() << " seconds." << std::endl;
 
         PSL::DepthMap<float, double> dM;
-//        if(sgm)
-//        {
-//            PSL::SemiGlobalMatching sGM(sgmP1,sgmP2);
-//            PSL::Grid<float> costVolume=cPS.getCostVolume();
-//            sGM.enableOutputDepthMap();
-//            sGM.enableOutputCostsEnabled();
-//            sGM.enableOutputUniquenessRatios();
-
-//            PSL::Grid<Eigen::Vector4d> planes = cPS.getPlanes();
-//            PSL::CameraMatrix<double> refCamScaled = refCam;
-//            refCamScaled.scaleK(pSRescaleFactor, pSRescaleFactor);
-//            sGM.matchFromPlaneSweep(costVolume,planes,refCamScaled);
-//            dM=sGM.getDepthMap();
-
-
-//            if(filter || storeBestCostsAndUniquenessRatios)
-//            {
-//                PSL::Grid<float> costs = sGM.getCosts();
-//                PSL::Grid<float> uniquenessRatios = sGM.getUniquenessRatios();
-
-//                if (storeBestCostsAndUniquenessRatios)
-//                {
-//                    std::ostringstream uniqunessFileName;
-//                    std::ostringstream bestCostFileName;
-
-//                    uniqunessFileName << outDir << "/" << baseName << "_uniquenessRatios.dat";
-//                    uniquenessRatios.saveAsDataFile(uniqunessFileName.str());
-
-//                    bestCostFileName << outDir << "/" << baseName << "_bestCosts.dat";
-//                    costs.saveAsDataFile(bestCostFileName.str());
-
-//                    std::ostringstream bestCostImgFileName;
-//                    bestCostImgFileName << outDir << "/" << baseName << "_bestCosts.jpg";
-//                    PSL::saveGridZSliceAsImage(costs, 0, 0.0f, 1.0f, bestCostImgFileName.str().c_str());
-
-//                    std::ostringstream uniqunessImgFileName;
-//                    uniqunessImgFileName << outDir << "/" << baseName << "_uniquenessRatios.jpg";
-//                    PSL::saveGridZSliceAsImage(uniquenessRatios, 0, 0.8f, 1.0f, uniqunessImgFileName.str().c_str());
-//                }
-
-//                if (filter)
-//                {
-//                int w = dM.getWidth(); int h = dM.getHeight();
-//                for(int y = 0; y<h; ++y)
-//                    for(int x = 0; x<w; ++x)
-//                    {
-//                        if(costs(x,y)>costThreshold || uniquenessRatios(x,y) > thresholdUniq)
-//                            dM(x,y)=-1;
-//                    }
-//                }
-//            }
-//        }
-//        else
         {
             std::cout << "Download best depths..." << std::endl;
             dM=cPS.getBestDepth();
@@ -732,7 +568,9 @@ int main(int argc, char* argv[])
                 writerP->Write();
                 std::cout << "Saved : " << depthmapPolyFileName << std::endl;
 
-                filenameListvtp << refViewId << " " << depthmapPolyFileName << std::endl;
+                char depthmapPolyFileNameAbs[PATH_MAX];
+                        realpath(depthmapPolyFileName.c_str(), depthmapPolyFileNameAbs);
+                filenameListvtp << refViewId << " " << depthmapPolyFileNameAbs << std::endl;
               }
 
               //Writing structured grid to the disk
@@ -756,25 +594,19 @@ int main(int argc, char* argv[])
                 writerG->Write();
                 std::cout << "Saved : " << depthmapGridFileName << std::endl;
 
-                filenameListvts << refViewId << " " << depthmapGridFileName << std::endl;
+                char depthmapGridFileNameAbs[PATH_MAX];
+                        realpath(depthmapGridFileName.c_str(), depthmapGridFileNameAbs);
+                filenameListvts << refViewId << " " << depthmapGridFileNameAbs << std::endl;
 
 
               }
             }
-
-
-
-
         }
 
         if (display)
             dM.displayInvDepthColored(pSMinDepth, pSMaxDepth, 20);
 
         std::cout << std::endl;
-//        if (writePointClouds == "vts" || writePointClouds == "vtpvts") {
-//        }
-//        if (writePointClouds == "vtp" || writePointClouds == "vtpvts") {
-//        }
     }
     filenameListvts.close();
     filenameListvtp.close();
