@@ -119,7 +119,7 @@ int main(int argc, char* argv[])
             ("frameFolder", boost::program_options::value<std::string>(&frameFolder)->default_value("/home/louis/kw_house/frames_kw_house"), "Folders containing the frames.")
             ("krtdFolder", boost::program_options::value<std::string>(&krtdFolder)->default_value("/home/louis/kw_house/krtd"), "Folders containing the .krtd files.")
             ("landmarksPLY", boost::program_options::value<std::string>(&landmarksPLY)->default_value("maptk_config/ba_output_aligned/landmarks.ply"), "File containing the landmark points (to estimate where dense estimation should take place).")
-            ("imageListFile", boost::program_options::value<std::string>(&imageListFile)->default_value("/home/louis/kw_house/frames_1in3_60.txt"), "Image list file")
+            ("imageListFile", boost::program_options::value<std::string>(&imageListFile)->default_value("/home/louis/kw_house/frames_1in3.txt"), "Image list file")
 //            ("configFile", boost::program_options::value<std::string>(&configFile)->default_value("conf3D.txt"), "Config file")
             ("display",  boost::program_options::bool_switch(&display), "Display images and depth maps")
             ("outputDirectory", boost::program_options::value<std::string>(&outDir)->default_value("depthMaps"), "Depth maps output directory")
@@ -358,8 +358,16 @@ int main(int argc, char* argv[])
     makeOutputFolder(outDir);
 
     int count = 0;
+    std::ofstream filenameListvts("vtsList.txt");
+    std::ofstream filenameListvtp("vtpList.txt");
     for (std::map<int, PSL::CameraMatrix<double> >::iterator it = cameras.begin(); it != cameras.end(); std::advance(it, refViewStep), count++)
     {
+//        if (writePointClouds == "vts" || writePointClouds == "vtpvts") {
+//        }
+//        if (writePointClouds == "vtp" || writePointClouds == "vtpvts") {
+//        }
+
+
         // if we want a specific ref view, go for it.
         if(view>=0 && it->first!=view) continue;
         const int refViewId = it->first;
@@ -657,8 +665,6 @@ int main(int argc, char* argv[])
                 scaledRefImg = refImg.clone();
             }
 
-            //TODO: Add an option allowing to choose between VRML and VTP file
-
             //Convert to VRML file
             if(writePointClouds == "vrml") {
               std::ostringstream pointCloudFileName;
@@ -709,6 +715,7 @@ int main(int argc, char* argv[])
 
               //Writing polydata to the disk
               if (writePointClouds == "vtp" || writePointClouds == "vtpvts") {
+
                 vtkNew<vtkPolyData> polydata;
                 polydata->SetPoints(points.Get());
                 polydata->GetPointData()->AddArray(uniquenessRatios.Get());
@@ -724,10 +731,14 @@ int main(int argc, char* argv[])
                 writerP->SetDataModeToBinary();
                 writerP->Write();
                 std::cout << "Saved : " << depthmapPolyFileName << std::endl;
+
+                filenameListvtp << refViewId << " " << depthmapPolyFileName << std::endl;
               }
 
               //Writing structured grid to the disk
               if (writePointClouds == "vts" || writePointClouds == "vtpvts") {
+
+
                 vtkNew<vtkStructuredGrid> structuredGrid;
                 structuredGrid->SetDimensions(dM.getHeight(),dM.getWidth(),1);
                 structuredGrid->SetPoints(points.Get());
@@ -744,6 +755,10 @@ int main(int argc, char* argv[])
                 writerG->SetDataModeToBinary();
                 writerG->Write();
                 std::cout << "Saved : " << depthmapGridFileName << std::endl;
+
+                filenameListvts << refViewId << " " << depthmapGridFileName << std::endl;
+
+
               }
             }
 
@@ -756,5 +771,11 @@ int main(int argc, char* argv[])
             dM.displayInvDepthColored(pSMinDepth, pSMaxDepth, 20);
 
         std::cout << std::endl;
+//        if (writePointClouds == "vts" || writePointClouds == "vtpvts") {
+//        }
+//        if (writePointClouds == "vtp" || writePointClouds == "vtpvts") {
+//        }
     }
+    filenameListvts.close();
+    filenameListvtp.close();
 }
