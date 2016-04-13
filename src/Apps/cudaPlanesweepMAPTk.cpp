@@ -25,6 +25,8 @@
 #include <vtkXMLPolyDataWriter.h>
 #include <vtkStructuredGrid.h>
 #include <vtkXMLStructuredGridWriter.h>
+#include <vtkImageData.h>
+#include <vtkXMLImageDataWriter.h>
 
 bool overlapCompare(std::pair<int, float> p1, std::pair<int, float> p2)
 {
@@ -533,21 +535,55 @@ int main(int argc, char* argv[])
               color->SetNumberOfComponents(3);
               color->SetNumberOfTuples(scaledRefImg.rows*scaledRefImg.cols);
 
+              vtkNew<vtkDoubleArray> depths;
+              depths->SetName("Depths");
+              depths->SetNumberOfComponents(1);
+              depths->SetNumberOfTuples(scaledRefImg.rows*scaledRefImg.cols);
+
               PSL::Grid<float> costs = cPS.getBestCosts();
               PSL::Grid<float> uRatios = cPS.getUniquenessRatios();
 
-              for (int x = 0, pt_id = 0; x < dM.getWidth(); ++x) {
-                for (int y = 0; y < dM.getHeight(); ++y, pt_id++) {
+              int dim[3] = {dM.getWidth(),dM.getHeight(),1};
+              int ijk[3];
+              ijk[2] = 0;
+
+              vtkIdType pt_id;
+
+              for (int x = 0; x < dM.getWidth(); ++x) {
+                ijk[0] = x;
+                for (int y = 0; y < dM.getHeight(); ++y) {
+                  ijk[1] = dM.getHeight()-y-1;
+                  pt_id = vtkStructuredData::ComputePointId(dim,ijk);
+
                   Eigen::Matrix<double, 4, 1> p = dM.unproject(x,y);
 
                   points->SetPoint(pt_id,p(0,0),p(1,0),p(2,0));
                   uniquenessRatios->SetValue(pt_id, uRatios(x,y));
-                  bestCost->SetValue(pt_id, costs(y,y));
+                  bestCost->SetValue(pt_id, costs(x,y));
+
+                  depths->SetValue(pt_id,p(2.0));
 
                   cv::Vec3b bgr = scaledRefImg.at<cv::Vec3b>(y,x);
                   color->SetTuple3(pt_id,(int) bgr[2],(int) bgr[1],(int) bgr[0]);
                 }
               }
+
+              vtkNew<vtkImageData> imageData;
+              imageData->SetSpacing(1,1,1);
+              imageData->SetOrigin(0,0,0);
+              imageData->SetDimensions(dM.getWidth(),dM.getHeight(),1);
+              imageData->GetPointData()->AddArray(depths.Get());
+
+              vtkNew<vtkXMLImageDataWriter> writerI;
+              std::string refFrame = static_cast<ostringstream*>( &(ostringstream() << refViewId/refViewStep) )->str();
+              std::string depthmapImageFileName = outDir + "/"+ baseName + "_depth_map." + refFrame + ".vti";
+
+              writerI->SetFileName(depthmapImageFileName.c_str());
+              writerI->AddInputDataObject(imageData.Get());
+              writerI->SetDataModeToBinary();
+              writerI->Write();
+              std::cout << "Saved : " << depthmapImageFileName << std::endl;
+
 
               //Writing polydata to the disk
               if (writePointClouds == "vtp" || writePointClouds == "vtpvts") {
@@ -559,7 +595,6 @@ int main(int argc, char* argv[])
                 polydata->GetPointData()->AddArray(color.Get());
 
                 vtkNew<vtkXMLPolyDataWriter> writerP;
-                std::string refFrame = static_cast<ostringstream*>( &(ostringstream() << refViewId/refViewStep) )->str();
                 std::string depthmapPolyFileName = outDir + "/"+ baseName + "_depth_map." + refFrame + ".vtp";
 
                 writerP->SetFileName(depthmapPolyFileName.c_str());
@@ -578,14 +613,14 @@ int main(int argc, char* argv[])
 
 
                 vtkNew<vtkStructuredGrid> structuredGrid;
-                structuredGrid->SetDimensions(dM.getHeight(),dM.getWidth(),1);
+                structuredGrid->SetDimensions(dM.getWidth(),dM.getHeight(),1);
                 structuredGrid->SetPoints(points.Get());
                 structuredGrid->GetPointData()->AddArray(uniquenessRatios.Get());
                 structuredGrid->GetPointData()->AddArray(bestCost.Get());
                 structuredGrid->GetPointData()->AddArray(color.Get());
 
                 vtkNew<vtkXMLStructuredGridWriter> writerG;
-                std::string refFrame = static_cast<ostringstream*>( &(ostringstream() << refViewId/refViewStep) )->str();
+//                std::string refFrame = static_cast<ostringstream*>( &(ostringstream() << refViewId/refViewStep) )->str();
                 std::string depthmapGridFileName = outDir + "/"+ baseName + "_depth_map." + refFrame + ".vts";
 
                 writerG->SetFileName(depthmapGridFileName.c_str());
