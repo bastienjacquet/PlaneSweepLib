@@ -573,6 +573,9 @@ int main(int argc, char* argv[])
               imageData->SetOrigin(0,0,0);
               imageData->SetDimensions(dM.getWidth(),dM.getHeight(),1);
               imageData->GetPointData()->AddArray(depths.Get());
+              imageData->GetPointData()->AddArray(color.Get());
+              imageData->GetPointData()->AddArray(uniquenessRatios.Get());
+              imageData->GetPointData()->AddArray(bestCost.Get());
 
               vtkNew<vtkXMLImageDataWriter> writerI;
               std::string refFrame = static_cast<ostringstream*>( &(ostringstream() << refViewId/refViewStep) )->str();
