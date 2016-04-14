@@ -484,6 +484,15 @@ int main(int argc, char* argv[])
         dM.saveInvDepthAsColorImage(fileNameImg.str(), minZ, maxZ);
         std::cout << "Saved : " << fileNameImg.str() << std::endl;
 
+        //K File
+        cameras[refViewId];
+        std::ostringstream kFileName;
+        kFileName << outDir << "/" << baseName << "_k_matrix.txt";
+        std::ofstream kFile;
+        kFile.open(kFileName.str().c_str());
+        kFile << cPS.getRefImgCam().getK();
+        kFile.close();
+
         if (writePointClouds != "")
         {
             // scale refImg
@@ -561,7 +570,7 @@ int main(int argc, char* argv[])
                   uniquenessRatios->SetValue(pt_id, uRatios(x,y));
                   bestCost->SetValue(pt_id, costs(x,y));
 
-                  depths->SetValue(pt_id,p(2.0));
+                  depths->SetValue(pt_id,dM(x,y));
 
                   cv::Vec3b bgr = scaledRefImg.at<cv::Vec3b>(y,x);
                   color->SetTuple3(pt_id,(int) bgr[2],(int) bgr[1],(int) bgr[0]);
