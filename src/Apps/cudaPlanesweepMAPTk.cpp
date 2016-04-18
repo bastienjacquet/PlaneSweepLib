@@ -305,6 +305,8 @@ int main(int argc, char* argv[])
     int count = 0;
     std::ofstream filenameListvts("vtsList.txt");
     std::ofstream filenameListvtp("vtpList.txt");
+    std::ofstream filenameListvti("vtiList.txt");
+    std::ofstream kList("kList.txt");
     for (std::map<int, PSL::CameraMatrix<double> >::iterator it = cameras.begin(); it != cameras.end(); std::advance(it, refViewStep), count++)
     {
         // if we want a specific ref view, go for it.
@@ -492,6 +494,11 @@ int main(int argc, char* argv[])
         kFile.open(kFileName.str().c_str());
         kFile << cPS.getRefImgCam().getK();
         kFile.close();
+        std::cout << "Saved : " << kFileName.str() << std::endl;
+
+        char kNameAbs[PATH_MAX];
+                realpath(kFileName.str().c_str(), kNameAbs);
+        kList << refViewId << " " << kNameAbs << std::endl;
 
         if (writePointClouds != "")
         {
@@ -596,6 +603,9 @@ int main(int argc, char* argv[])
               writerI->Write();
               std::cout << "Saved : " << depthmapImageFileName << std::endl;
 
+              char depthmapImageNameAbs[PATH_MAX];
+                      realpath(depthmapImageFileName.c_str(), depthmapImageNameAbs);
+              filenameListvti << refViewId << " " << depthmapImageNameAbs << std::endl;
 
               //Writing polydata to the disk
               if (writePointClouds == "vtp" || writePointClouds == "vtpvts") {
@@ -657,4 +667,6 @@ int main(int argc, char* argv[])
     }
     filenameListvts.close();
     filenameListvtp.close();
+    filenameListvti.close();
+    kList.close();
 }
