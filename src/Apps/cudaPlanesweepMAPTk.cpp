@@ -496,9 +496,9 @@ int main(int argc, char* argv[])
         kFile.close();
         std::cout << "Saved : " << kFileName.str() << std::endl;
 
-        char kNameAbs[PATH_MAX];
-                realpath(kFileName.str().c_str(), kNameAbs);
-        kList << refViewId << " " << kNameAbs << std::endl;
+//        char kNameAbs[PATH_MAX];
+//                realpath(kFileName.str().c_str(), kNameAbs);
+        kList << refViewId << " " << kFileName.str().c_str() << std::endl;
 
         if (writePointClouds != "")
         {
@@ -603,9 +603,9 @@ int main(int argc, char* argv[])
               writerI->Write();
               std::cout << "Saved : " << depthmapImageFileName << std::endl;
 
-              char depthmapImageNameAbs[PATH_MAX];
-                      realpath(depthmapImageFileName.c_str(), depthmapImageNameAbs);
-              filenameListvti << refViewId << " " << depthmapImageNameAbs << std::endl;
+//              char depthmapImageNameAbs[PATH_MAX];
+//                      realpath(depthmapImageFileName.c_str(), depthmapImageNameAbs);
+              filenameListvti << refViewId << " " << depthmapImageFileName.c_str() << std::endl;
 
               //Writing polydata to the disk
               if (writePointClouds == "vtp" || writePointClouds == "vtpvts") {
@@ -625,9 +625,9 @@ int main(int argc, char* argv[])
                 writerP->Write();
                 std::cout << "Saved : " << depthmapPolyFileName << std::endl;
 
-                char depthmapPolyFileNameAbs[PATH_MAX];
-                        realpath(depthmapPolyFileName.c_str(), depthmapPolyFileNameAbs);
-                filenameListvtp << refViewId << " " << depthmapPolyFileNameAbs << std::endl;
+//                char depthmapPolyFileNameAbs[PATH_MAX];
+//                        realpath(depthmapPolyFileName.c_str(), depthmapPolyFileNameAbs);
+                filenameListvtp << refViewId << " " << depthmapPolyFileName.c_str() << std::endl;
               }
 
               //Writing structured grid to the disk
@@ -651,9 +651,9 @@ int main(int argc, char* argv[])
                 writerG->Write();
                 std::cout << "Saved : " << depthmapGridFileName << std::endl;
 
-                char depthmapGridFileNameAbs[PATH_MAX];
-                        realpath(depthmapGridFileName.c_str(), depthmapGridFileNameAbs);
-                filenameListvts << refViewId << " " << depthmapGridFileNameAbs << std::endl;
+//                char depthmapGridFileNameAbs[PATH_MAX];
+//                        realpath(depthmapGridFileName.c_str(), depthmapGridFileNameAbs);
+                filenameListvts << refViewId << " " << depthmapGridFileName.c_str() << std::endl;
 
 
               }
