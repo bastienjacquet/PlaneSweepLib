@@ -124,7 +124,7 @@ int main(int argc, char* argv[])
             ("imageListFile", boost::program_options::value<std::string>(&imageListFile)->default_value("/home/louis/kw_house/frames_1in3.txt"), "Image list file")
 //            ("configFile", boost::program_options::value<std::string>(&configFile)->default_value("conf3D.txt"), "Config file")
             ("display",  boost::program_options::bool_switch(&display), "Display images and depth maps")
-            ("outputDirectory", boost::program_options::value<std::string>(&outDir)->default_value("depthMaps"), "Depth maps output directory")
+            ("outputDirectory", boost::program_options::value<std::string>(&outDir)->default_value("/home/louis/develop/maptk_build/bin/depthMaps"), "Depth maps output directory")
             ("filter", boost::program_options::bool_switch(&filter),"Filter the depths maps based on cost and uniqueness ratio")
             ("debug", boost::program_options::bool_switch(&debug),"Show more debug informations")
             ("view", boost::program_options::value<int>(&view)->default_value(-1), "View id to generate depthmap for. All if -1.")
@@ -489,10 +489,16 @@ int main(int argc, char* argv[])
         //K File
         cameras[refViewId];
         std::ostringstream kFileName;
-        kFileName << outDir << "/" << baseName << "_k_matrix.txt";
+        kFileName << outDir << "/" << baseName << "_camera.krtd";
         std::ofstream kFile;
         kFile.open(kFileName.str().c_str());
         kFile << cPS.getRefImgCam().getK();
+        kFile << std::endl << std::endl;
+        kFile << cPS.getRefImgCam().getR();
+        kFile << std::endl << std::endl;
+        kFile << cPS.getRefImgCam().getT()(0,0) << " " << cPS.getRefImgCam().getT()(1,0) << " " << cPS.getRefImgCam().getT()(2,0) << std::endl;
+        kFile << std::endl << std::endl;
+        kFile << "0";
         kFile.close();
         std::cout << "Saved : " << kFileName.str() << std::endl;
 
