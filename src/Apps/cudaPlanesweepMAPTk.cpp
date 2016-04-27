@@ -118,13 +118,13 @@ int main(int argc, char* argv[])
     boost::program_options::options_description desc("Allowed options");
     desc.add_options()
             ("help", "Produce help message")
-            ("frameFolder", boost::program_options::value<std::string>(&frameFolder)->default_value("/home/louis/kw_house/frames_kw_house"), "Folders containing the frames.")
-            ("krtdFolder", boost::program_options::value<std::string>(&krtdFolder)->default_value("/home/louis/kw_house/krtd"), "Folders containing the .krtd files.")
-            ("landmarksPLY", boost::program_options::value<std::string>(&landmarksPLY)->default_value("maptk_config/ba_output_aligned/landmarks.ply"), "File containing the landmark points (to estimate where dense estimation should take place).")
-            ("imageListFile", boost::program_options::value<std::string>(&imageListFile)->default_value("/home/louis/kw_house/frames_1in3.txt"), "Image list file")
+            ("frameFolder", boost::program_options::value<std::string>(&frameFolder)->default_value("capture_1/"), "Folders containing the frames.")
+            ("krtdFolder", boost::program_options::value<std::string>(&krtdFolder)->default_value("ba_output/krtd/"), "Folders containing the .krtd files.")
+            ("landmarksPLY", boost::program_options::value<std::string>(&landmarksPLY)->default_value("ba_output/landmarks.ply"), "File containing the landmark points (to estimate where dense estimation should take place).")
+            ("imageListFile", boost::program_options::value<std::string>(&imageListFile)->default_value("frames_capture_1_1in3_for_psl.txt"), "Image list file")
 //            ("configFile", boost::program_options::value<std::string>(&configFile)->default_value("conf3D.txt"), "Config file")
             ("display",  boost::program_options::bool_switch(&display), "Display images and depth maps")
-            ("outputDirectory", boost::program_options::value<std::string>(&outDir)->default_value("/home/louis/develop/maptk_build/bin/depthMaps"), "Depth maps output directory")
+            ("outputDirectory", boost::program_options::value<std::string>(&outDir)->default_value("depthMaps_capture_1_tmp"), "Depth maps output directory")
             ("filter", boost::program_options::bool_switch(&filter),"Filter the depths maps based on cost and uniqueness ratio")
             ("debug", boost::program_options::bool_switch(&debug),"Show more debug informations")
             ("view", boost::program_options::value<int>(&view)->default_value(-1), "View id to generate depthmap for. All if -1.")
@@ -135,6 +135,7 @@ int main(int argc, char* argv[])
             ("PS_MATCHING_COSTS", boost::program_options::value<std::string>(&pSMatchingCostsStr)->default_value("SAD"), "Type of matching cost strategy [ZNCC or SAD]")
             ("PS_MATCHING_WINDOW_SIZE", boost::program_options::value<int>(&pSMatchingWindowSize)->default_value(15), "Matching window size")
             ("PS_COLOR_MATCHING", boost::program_options::bool_switch(&pSColorMatching),"Toggle color matching")
+            ("PS_AUTO_RANGE", boost::program_options::bool_switch(&pSAutoRange),"Toggle auto range")
             ("PS_OCCLUSION_MODE", boost::program_options::value<std::string>(&pSOcclusionModeStr)->default_value("None"), "Type of occlusion mode [None, BestK or RefSplit]")
             ("PS_OCCLUSION_BEST_K_K", boost::program_options::value<int>(&pSOcclusionBestKK)->default_value(0), "Best K")
             ("PS_USE_SUBPIXEL", boost::program_options::bool_switch(&psEnableSubPixel),"Toggle sub pixel computation")
@@ -153,6 +154,30 @@ int main(int argc, char* argv[])
     boost::program_options::store(boost::program_options::command_line_parser(argc, argv).options(desc).run(), vm);
     boost::program_options::notify(vm);
 
+    //Read the .ply File
+    std::vector<Eigen::Vector3d> points;
+
+    std::ifstream landmarksFile(landmarksPLY.c_str());
+    std::string header;
+
+    landmarksFile >> header;
+    while(header != "end_header")
+    {
+      landmarksFile >> header;
+    }
+
+    double x, y, z;
+    int id;
+
+    while(landmarksFile >> x >> y >> z >> id)
+    {
+      points.push_back(Eigen::Vector3d(x,y,z));
+    }
+
+//    //For debug purpose
+//    for (int i = 0; i < points.size(); ++i) {
+//      std::cout << points[i] << std::endl;
+//    }
 
     if (vm.count("help"))
     {
@@ -303,10 +328,15 @@ int main(int argc, char* argv[])
     makeOutputFolder(outDir);
 
     int count = 0;
-    std::ofstream filenameListvts("vtsList.txt");
-    std::ofstream filenameListvtp("vtpList.txt");
-    std::ofstream filenameListvti("vtiList.txt");
-    std::ofstream kList("kList.txt");
+    std::string listName;
+    listName = outDir + "/vtsList.txt";
+    std::ofstream filenameListvts(listName.c_str());
+    listName = outDir + "/vtpList.txt";
+    std::ofstream filenameListvtp(listName.c_str());
+    listName = outDir + "/vtiList.txt";
+    std::ofstream filenameListvti(listName.c_str());
+    listName = outDir + "/kList.txt";
+    std::ofstream kList(listName.c_str());
     for (std::map<int, PSL::CameraMatrix<double> >::iterator it = cameras.begin(); it != cameras.end(); std::advance(it, refViewStep), count++)
     {
         // if we want a specific ref view, go for it.
@@ -353,11 +383,48 @@ int main(int argc, char* argv[])
         cPS.enableSubPixel(psEnableSubPixel);
         cPS.enableColorMatching(pSColorMatching);
         if (debug) std::cout << "  pSColorMatching " << pSColorMatching <<  std::endl;
+
+        if (pSAutoRange)
+        {
+
+
+            // Compute near and far range.
+            double nearZ,farZ;
+            std::vector<float> zs;
+            for(unsigned int i=0; i<points.size(); i++) {
+                Eigen::Vector3d x = (it->second.getR()*points[i] + it->second.getT());
+                Eigen::Vector3d px= 1.0/x[2]*(it->second.getK()*x);
+                if(x[2]>0 && px[0]>0 && px[0]<imageWidth && px[1]>0 && px[1]<imageHeight)
+                    zs.push_back(x[2]);
+            }
+            sort(zs.begin(),zs.end());
+            const double outlierThres=0.05;
+            double safeness_margin_factor=0.33;
+            if (zs.size()){
+                nearZ = zs[(int)((zs.size()-1)*outlierThres)];
+                farZ = zs[(int)((zs.size()-1)*(1-outlierThres))];
+                std::cout<<"    distances from camera are "<<zs[0]<<"->"<<zs[zs.size()-1]<<" ("<< zs.size()<<" visible points)"<<std::endl;
+                std::cout<<"    distances ["<<outlierThres*100<<"%->"<<(1.0-outlierThres)*100<<"%] are "<<nearZ<<"->"<<farZ<<std::endl;
+                nearZ *= (1-safeness_margin_factor);
+                farZ *= (1+safeness_margin_factor);
+                std::cout<<"    planes will be "<<nearZ<<"->"<<farZ<<" by "<<(farZ-nearZ)/pSNumPlanes<<" increment"<<std::endl;
+                pSMinDepth=nearZ;
+                pSMaxDepth=farZ;
+                cPS.setZRange(nearZ, farZ);
+            }else {
+                std::cout<<"    NO VISIBLE POINTS, demoting to depths from config file : "<<pSMinDepth<<"->"<< pSMaxDepth<<" ."<<std::endl;
+
+            }
             maxZ  = pSMaxDepth;
             minZ  = pSMinDepth;
+        }
+        else {
+          maxZ  = pSMaxDepth;
+          minZ  = pSMinDepth;
+          cPS.setZRange(minZ, maxZ);
+        }
 
-        cPS.setZRange(minZ, maxZ);
-        if (debug) std::cout << "  Z range :  " << minZ << "  - " << maxZ <<  std::endl;
+        if (debug) std::cout << "  Z range :  " << pSMinDepth << "  - " << pSMaxDepth <<  std::endl;
 
         if ((filter || storeBestCostsAndUniquenessRatios)/* && !sgm*/)
         {
@@ -447,8 +514,10 @@ int main(int argc, char* argv[])
                     uniqunessFileName << outDir << "/" << baseName << "_uniquenessRatios.dat";
                     uniquenessRatios.saveAsDataFile(uniqunessFileName.str());
 
+                    float maxBestCost = (pSMatchingCosts==PSL::PLANE_SWEEP_SAD)?(pSMatchingWindowSize*pSMatchingWindowSize)*255.0f:1.0f;
                     bestCostImgFileName << outDir << "/" << baseName << "_bestCosts.jpg";
-                    PSL::saveGridZSliceAsImage(costs, 0, 0.0f, 1.0f, bestCostImgFileName.str().c_str());
+                    std::cout << "maxBestCost = " << maxBestCost << std::endl;
+                    PSL::saveGridZSliceAsImage(costs, 0, 0.0f, maxBestCost, bestCostImgFileName.str().c_str());
 
                     bestCostFileName << outDir << "/" << baseName << "_bestCosts.dat";
                     costs.saveAsDataFile(bestCostFileName.str());
@@ -477,10 +546,10 @@ int main(int argc, char* argv[])
             }
         }
 
-        std::ostringstream fileNameData;
-        fileNameData << outDir << "/" << baseName << "_depth_map.dat";
-        dM.saveAsDataFile(fileNameData.str());
-        std::cout << "Saved : " << fileNameData.str() << std::endl;
+//        std::ostringstream fileNameData;
+//        fileNameData << outDir << "/" << baseName << "_depth_map.dat";
+//        dM.saveAsDataFile(fileNameData.str());
+//        std::cout << "Saved : " << fileNameData.str() << std::endl;
         std::ostringstream fileNameImg;
         fileNameImg << outDir << "/" << baseName << "_inv_depth_map.jpg";
         dM.saveInvDepthAsColorImage(fileNameImg.str(), minZ, maxZ);
@@ -605,6 +674,7 @@ int main(int argc, char* argv[])
 
               writerI->SetFileName(depthmapImageFileName.c_str());
               writerI->AddInputDataObject(imageData.Get());
+//              writerI->SetCompressorTypeToZLib();
               writerI->SetDataModeToBinary();
               writerI->Write();
               std::cout << "Saved : " << depthmapImageFileName << std::endl;
@@ -618,6 +688,7 @@ int main(int argc, char* argv[])
 
                 vtkNew<vtkPolyData> polydata;
                 polydata->SetPoints(points.Get());
+                polydata->GetPointData()->AddArray(depths.Get());
                 polydata->GetPointData()->AddArray(uniquenessRatios.Get());
                 polydata->GetPointData()->AddArray(bestCost.Get());
                 polydata->GetPointData()->AddArray(color.Get());
@@ -627,6 +698,7 @@ int main(int argc, char* argv[])
 
                 writerP->SetFileName(depthmapPolyFileName.c_str());
                 writerP->AddInputDataObject(polydata.Get());
+//                writerP->SetCompressorTypeToZLib();
                 writerP->SetDataModeToBinary();
                 writerP->Write();
                 std::cout << "Saved : " << depthmapPolyFileName << std::endl;
@@ -643,6 +715,7 @@ int main(int argc, char* argv[])
                 vtkNew<vtkStructuredGrid> structuredGrid;
                 structuredGrid->SetDimensions(dM.getWidth(),dM.getHeight(),1);
                 structuredGrid->SetPoints(points.Get());
+                structuredGrid->GetPointData()->AddArray(depths.Get());
                 structuredGrid->GetPointData()->AddArray(uniquenessRatios.Get());
                 structuredGrid->GetPointData()->AddArray(bestCost.Get());
                 structuredGrid->GetPointData()->AddArray(color.Get());
@@ -653,6 +726,7 @@ int main(int argc, char* argv[])
 
                 writerG->SetFileName(depthmapGridFileName.c_str());
                 writerG->AddInputDataObject(structuredGrid.Get());
+//                writerG->SetCompressorTypeToZLib();
                 writerG->SetDataModeToBinary();
                 writerG->Write();
                 std::cout << "Saved : " << depthmapGridFileName << std::endl;
