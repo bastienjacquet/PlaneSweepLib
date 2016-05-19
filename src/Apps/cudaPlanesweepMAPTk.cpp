@@ -144,7 +144,7 @@ int main(int argc, char* argv[])
             ("PS_UNIQUENESS_RATIO_THRESHOLD", boost::program_options::value<float>(&thresholdUniq)->default_value(0.5), "Uniqueness ratio threshold. Only need if \"filter\" is toggled")
             ("PS_MIN_ANGLE_DEGREE", boost::program_options::value<float>(&minAngleDegree)->default_value(2.0), "Min angle degree between two frames")
             ("ref_view_step", boost::program_options::value<int>(&refViewStep)->default_value(0), "Best K")
-            ("writePointClouds", boost::program_options::value<std::string>(&writePointClouds)->default_value(""), "Saving data to a file [vrml, vtp, vts or vtpvts]")
+            ("writePointClouds", boost::program_options::value<std::string>(&writePointClouds)->default_value(""), "Saving data to a file [vrml, vti, vtp, vts or vtpvts]")
 
 //            ("writePointClouds", boost::program_options::bool_switch(&writePointClouds), "Write point clouds in vrml format")
            // ("storeBestCostsAndUniquenessRatios", boost::program_options::bool_switch(&storeBestCostsAndUniquenessRatios), "Store the best costs and the uniqueness ratios in dat files")
@@ -185,7 +185,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    boost::timer timer;
+    boost::timer timer,globalTimer;
 
     PSL::PlaneSweepMatchingCosts pSMatchingCosts;
     if (pSMatchingCostsStr == "ZNCC")
@@ -233,7 +233,8 @@ int main(int argc, char* argv[])
         std::string imageFileName;
         while (imagesStream >> imageFileName)
         {
-            imageFileNames.push_back(imageFileName);
+            boost::filesystem::path p(imageFileName);
+            imageFileNames.push_back(p.filename().c_str());
         }
     }
     int numCameras = imageFileNames.size();
@@ -258,37 +259,44 @@ int main(int argc, char* argv[])
         // try to load k, r, t matrices
         std::ifstream krtdMatrixStr;
         krtdMatrixStr.open(krtdMatrixFile.c_str());
-        if (!krtdMatrixStr.is_open())
+//        if (!krtdMatrixStr.is_open())
+//        {
+//            PSL_THROW_EXCEPTION(("Error opening KRT matrix file : "+imageListFile).c_str())
+//        }
+
+        if (krtdMatrixStr.is_open())
         {
-            PSL_THROW_EXCEPTION(("Error opening KRT matrix file : "+imageListFile).c_str())
+          Eigen::Matrix3d K = Eigen::Matrix3d::Identity();
+          krtdMatrixStr >> K(0,0) >> K(0,1) >> K(0,2);
+          krtdMatrixStr >> K(1,0) >> K(1,1) >> K(1,2);
+          krtdMatrixStr >> K(2,0) >> K(2,1) >> K(2,2);
+          //std::cout << K << std::endl;
+
+          Eigen::Matrix<double, 3, 3> R;
+          Eigen::Matrix<double, 3, 1> T;
+
+          for (int i = 0; i < 3; i++)
+          {
+              for (int j = 0; j < 3; j++)
+                  krtdMatrixStr >> R(i,j);
+
+          }
+          for (int i = 0; i < 3; i++)
+              krtdMatrixStr >> T(i);
+
+          //std::cout << R << std::endl;
+          //std::cout << T << std::endl;
+
+          Eigen::Matrix<double, 3, 1> d;
+          for (int i = 0; i < 3; i++)
+              krtdMatrixStr >> d(i);
+
+          cameras[id].setKRT(K, R, T);
         }
-
-        Eigen::Matrix3d K = Eigen::Matrix3d::Identity();
-        krtdMatrixStr >> K(0,0) >> K(0,1) >> K(0,2);
-        krtdMatrixStr >> K(1,0) >> K(1,1) >> K(1,2);
-        krtdMatrixStr >> K(2,0) >> K(2,1) >> K(2,2);
-        //std::cout << K << std::endl;
-
-        Eigen::Matrix<double, 3, 3> R;
-        Eigen::Matrix<double, 3, 1> T;
-
-        for (int i = 0; i < 3; i++)
+        else
         {
-            for (int j = 0; j < 3; j++)
-                krtdMatrixStr >> R(i,j);
-
+          std::cout << "No krtd file found for the frame " << krtdMatrixFile.c_str() << ". Jumping to next frame..." << std::endl;
         }
-        for (int i = 0; i < 3; i++)
-            krtdMatrixStr >> T(i);
-
-        //std::cout << R << std::endl;
-        //std::cout << T << std::endl;
-
-        Eigen::Matrix<double, 3, 1> d;
-        for (int i = 0; i < 3; i++)
-            krtdMatrixStr >> d(i);  
-
-        cameras[id].setKRT(K, R, T);
     }
     std::cout << "Cameras KRT have been loaded." << std::endl;
 
@@ -327,6 +335,7 @@ int main(int argc, char* argv[])
     std::cout<< "Images are assumed to be " << imageWidth << "x"<< imageHeight <<std::endl;
     makeOutputFolder(outDir);
 
+    globalTimer.restart();
     int count = 0;
     std::string listName;
     listName = outDir + "/vtsList.txt";
@@ -573,7 +582,7 @@ int main(int argc, char* argv[])
 
 //        char kNameAbs[PATH_MAX];
 //                realpath(kFileName.str().c_str(), kNameAbs);
-        kList << refViewId << " " << kFileName.str().c_str() << std::endl;
+        kList << refViewId << " " <<  baseName << "_camera.krtd" << std::endl;
 
         if (writePointClouds != "")
         {
@@ -681,7 +690,7 @@ int main(int argc, char* argv[])
 
 //              char depthmapImageNameAbs[PATH_MAX];
 //                      realpath(depthmapImageFileName.c_str(), depthmapImageNameAbs);
-              filenameListvti << refViewId << " " << depthmapImageFileName.c_str() << std::endl;
+              filenameListvti << refViewId << " " << baseName << "_depth_map." << refFrame << ".vti" << std::endl;
 
               //Writing polydata to the disk
               if (writePointClouds == "vtp" || writePointClouds == "vtpvts") {
@@ -744,6 +753,10 @@ int main(int argc, char* argv[])
             dM.displayInvDepthColored(pSMinDepth, pSMaxDepth, 20);
 
         std::cout << std::endl;
+        int done=count+1,tot=cameras.size()/refViewStep,tbd=tot-done;
+        std::cout << "Elapsed time: "<< globalTimer.elapsed()<< "s for " << done << "/" << tot << " ref views."<<std::endl
+                  << "Estimated Time Remaining: " << globalTimer.elapsed()/done*tbd << "s for "
+                  << tbd << "/" << tot << " ref views."<<std::endl;
     }
     filenameListvts.close();
     filenameListvtp.close();
