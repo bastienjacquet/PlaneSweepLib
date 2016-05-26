@@ -154,6 +154,12 @@ int main(int argc, char* argv[])
     boost::program_options::store(boost::program_options::command_line_parser(argc, argv).options(desc).run(), vm);
     boost::program_options::notify(vm);
 
+    if (vm.count("help"))
+    {
+        std::cout << desc << std::endl;
+        return 1;
+    }
+
     //Read the .ply File
     std::vector<Eigen::Vector3d> points;
 
@@ -178,12 +184,6 @@ int main(int argc, char* argv[])
 //    for (int i = 0; i < points.size(); ++i) {
 //      std::cout << points[i] << std::endl;
 //    }
-
-    if (vm.count("help"))
-    {
-        std::cout << desc << std::endl;
-        return 1;
-    }
 
     boost::timer timer,globalTimer;
 
