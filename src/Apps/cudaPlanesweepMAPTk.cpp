@@ -143,7 +143,7 @@ int main(int argc, char* argv[])
             ("PS_COST_THRESHOLD", boost::program_options::value<float>(&costThreshold)->default_value(0.0), "Cost threshold. Only need if \"filter\" is toggled")
             ("PS_UNIQUENESS_RATIO_THRESHOLD", boost::program_options::value<float>(&thresholdUniq)->default_value(0.5), "Uniqueness ratio threshold. Only need if \"filter\" is toggled")
             ("PS_MIN_ANGLE_DEGREE", boost::program_options::value<float>(&minAngleDegree)->default_value(2.0), "Min angle degree between two frames")
-            ("ref_view_step", boost::program_options::value<int>(&refViewStep)->default_value(0), "Best K")
+            ("ref_view_step", boost::program_options::value<int>(&refViewStep)->default_value(1), "Best K")
             ("writePointClouds", boost::program_options::value<std::string>(&writePointClouds)->default_value(""), "Saving data to a file [vrml, vti, vtp, vts or vtpvts]")
 
 //            ("writePointClouds", boost::program_options::bool_switch(&writePointClouds), "Write point clouds in vrml format")
