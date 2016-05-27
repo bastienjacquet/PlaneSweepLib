@@ -74,6 +74,7 @@ int main(int argc, char* argv[])
     bool debug = true;
     bool filter = false;
     bool storeBestCostsAndUniquenessRatios = true;
+    bool krtdOnly = false;
 //    bool writePointClouds = false;
     std::string writePointClouds;
 
@@ -135,6 +136,7 @@ int main(int argc, char* argv[])
             ("PS_MATCHING_COSTS", boost::program_options::value<std::string>(&pSMatchingCostsStr)->default_value("SAD"), "Type of matching cost strategy [ZNCC or SAD]")
             ("PS_MATCHING_WINDOW_SIZE", boost::program_options::value<int>(&pSMatchingWindowSize)->default_value(15), "Matching window size")
             ("PS_COLOR_MATCHING", boost::program_options::bool_switch(&pSColorMatching),"Toggle color matching")
+            ("krtdOnly", boost::program_options::bool_switch(&krtdOnly),"Don't compute depthmap, juste compute scaled krtd")
             ("PS_AUTO_RANGE", boost::program_options::bool_switch(&pSAutoRange),"Toggle auto range")
             ("PS_OCCLUSION_MODE", boost::program_options::value<std::string>(&pSOcclusionModeStr)->default_value("None"), "Type of occlusion mode [None, BestK or RefSplit]")
             ("PS_OCCLUSION_BEST_K_K", boost::program_options::value<int>(&pSOcclusionBestKK)->default_value(0), "Best K")
@@ -338,12 +340,15 @@ int main(int argc, char* argv[])
     globalTimer.restart();
     int count = 0;
     std::string listName;
-    listName = outDir + "/vtsList.txt";
-    std::ofstream filenameListvts(listName.c_str());
-    listName = outDir + "/vtpList.txt";
-    std::ofstream filenameListvtp(listName.c_str());
-    listName = outDir + "/vtiList.txt";
-    std::ofstream filenameListvti(listName.c_str());
+    std::ofstream filenameListvts, filenameListvtp, filenameListvti;
+    if (!krtdOnly){
+      listName = outDir + "/vtsList.txt";
+      filenameListvts.open(listName.c_str());
+      listName = outDir + "/vtpList.txt";
+      filenameListvtp.open(listName.c_str());
+      listName = outDir + "/vtiList.txt";
+      filenameListvti.open(listName.c_str());
+    }
     listName = outDir + "/kList.txt";
     std::ofstream kList(listName.c_str());
     for (std::map<int, PSL::CameraMatrix<double> >::iterator it = cameras.begin(); it != cameras.end(); std::advance(it, refViewStep), count++)
@@ -369,6 +374,7 @@ int main(int argc, char* argv[])
             std::cout << overlaps[j].first << " ";
         }
         std::cout << std::endl;
+
 
         timer.restart();
         std::cout << "Setting up cuda plane sweep and upload images..." << std::endl;
@@ -451,6 +457,28 @@ int main(int argc, char* argv[])
         if (refImg.empty())
             PSL_THROW_EXCEPTION(("Failed to load image : "+refImgFileName).c_str())
 
+        //First write K File
+        {
+          PSL::CameraMatrix<double> refCamScaled = cameras[refViewId];
+          refCamScaled.scaleK(pSRescaleFactor,pSRescaleFactor);
+
+          std::ostringstream kFileName;
+          kFileName << outDir << "/" << baseName << "_camera.krtd";
+          std::ofstream kFile;
+          kFile.open(kFileName.str().c_str());
+          kFile << refCamScaled.getK();
+          kFile << std::endl << std::endl;
+          kFile << refCamScaled.getR();
+          kFile << std::endl << std::endl;
+          kFile << refCamScaled.getT()(0,0) << " " << refCamScaled.getT()(1,0) << " " << refCamScaled.getT()(2,0) << std::endl;
+          kFile << std::endl << std::endl;
+          kFile << "0";
+          kFile.close();
+          kList << refViewId << " " <<  baseName << "_camera.krtd" << std::endl;
+          std::cout << "Saved : " << kFileName.str() << std::endl;
+          if (krtdOnly) continue;
+        }
+
         PSL::CameraMatrix<double>const & refCam = it->second;
         int numMatchingImages = 0;
         std::vector<int> selectedImg;
@@ -497,6 +525,7 @@ int main(int argc, char* argv[])
                 cPS.setOcclusionMode(PSL::PLANE_SWEEP_OCCLUSION_NONE);
         }
         timer.restart();
+
         std::cout << "Running cuda plane sweep... cPSRef = " << cPSRef << std::endl;
         cPS.process(cPSRef);
         std::cout << " done in " << timer.elapsed() << " seconds." << std::endl;
@@ -555,6 +584,7 @@ int main(int argc, char* argv[])
             }
         }
 
+
 //        std::ostringstream fileNameData;
 //        fileNameData << outDir << "/" << baseName << "_depth_map.dat";
 //        dM.saveAsDataFile(fileNameData.str());
@@ -564,26 +594,9 @@ int main(int argc, char* argv[])
         dM.saveInvDepthAsColorImage(fileNameImg.str(), minZ, maxZ);
         std::cout << "Saved : " << fileNameImg.str() << std::endl;
 
-        //K File
-        cameras[refViewId];
-        std::ostringstream kFileName;
-        kFileName << outDir << "/" << baseName << "_camera.krtd";
-        std::ofstream kFile;
-        kFile.open(kFileName.str().c_str());
-        kFile << cPS.getRefImgCam().getK();
-        kFile << std::endl << std::endl;
-        kFile << cPS.getRefImgCam().getR();
-        kFile << std::endl << std::endl;
-        kFile << cPS.getRefImgCam().getT()(0,0) << " " << cPS.getRefImgCam().getT()(1,0) << " " << cPS.getRefImgCam().getT()(2,0) << std::endl;
-        kFile << std::endl << std::endl;
-        kFile << "0";
-        kFile.close();
-        std::cout << "Saved : " << kFileName.str() << std::endl;
 
 //        char kNameAbs[PATH_MAX];
 //                realpath(kFileName.str().c_str(), kNameAbs);
-        kList << refViewId << " " <<  baseName << "_camera.krtd" << std::endl;
-
         if (writePointClouds != "")
         {
             // scale refImg
