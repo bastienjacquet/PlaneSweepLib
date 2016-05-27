@@ -330,9 +330,6 @@ int main(int argc, char* argv[])
     float minZ = (float) (2.5f*avgDistance);
     float maxZ = (float) (100.0f*avgDistance);
 
-    int imageWidth=1920;
-    int imageHeight=1080;
-    std::cout<< "Images are assumed to be " << imageWidth << "x"<< imageHeight <<std::endl;
     makeOutputFolder(outDir);
 
     globalTimer.restart();
@@ -400,9 +397,14 @@ int main(int argc, char* argv[])
             // Compute near and far range.
             double nearZ,farZ;
             std::vector<float> zs;
+            const Eigen::Matrix3d& K = it->second.getK();
+            // Assume the image size is twice the principal point
+            const int imageWidth=static_cast<int>(K(0,2) * 2);
+            const int imageHeight=static_cast<int>(K(1,2) * 2);
+            std::cout<< "Image " << it->first << " is assumed to be " << imageWidth << "x"<< imageHeight <<std::endl;
             for(unsigned int i=0; i<points.size(); i++) {
                 Eigen::Vector3d x = (it->second.getR()*points[i] + it->second.getT());
-                Eigen::Vector3d px= 1.0/x[2]*(it->second.getK()*x);
+                Eigen::Vector3d px= 1.0/x[2]*(K * x);
                 if(x[2]>0 && px[0]>0 && px[0]<imageWidth && px[1]>0 && px[1]<imageHeight)
                     zs.push_back(x[2]);
             }
