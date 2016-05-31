@@ -5,6 +5,7 @@
 #include <iostream>
 #include <iomanip>
 #include <fstream>
+#include <sstream>
 #include <vector>
 
 #include <opencv2/highgui/highgui.hpp>
@@ -169,8 +170,11 @@ int main(int argc, char* argv[])
     double x, y, z;
     int id;
 
-    while(landmarksFile >> x >> y >> z >> id)
+    std::string line;
+    while(std::getline(landmarksFile, line))
     {
+      std::stringstream ss(line);
+      ss >> x >> y >> z;
       points.push_back(Eigen::Vector3d(x,y,z));
     }
 
