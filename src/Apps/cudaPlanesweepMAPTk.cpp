@@ -88,10 +88,6 @@ int main(int argc, char* argv[])
     // plane sweep parameters
     bool pSAutoRange;
     float pSMinDepth=0,pSMaxDepth=0;
-//    if (!pSAutoRange){
-//        pSMinDepth = conf.getAsFloat("PS_MIN_DEPTH",true);
-//        pSMaxDepth = conf.getAsFloat("PS_MAX_DEPTH",true);
-//    }
     int pSNumPlanes;
     float pSRescaleFactor;
 
@@ -405,15 +401,15 @@ int main(int argc, char* argv[])
 
         if (pSAutoRange)
         {
-
-
-            // Compute near and far range.
+            // Compute near and far range from points that are in front of the camera and projects within image
             double nearZ,farZ;
             std::vector<float> zs;
             for(unsigned int i=0; i<points.size(); i++) {
                 Eigen::Vector3d x = (it->second.getR()*points[i] + it->second.getT());
                 Eigen::Vector3d px= 1.0/x[2]*(it->second.getK()*x);
-                if(x[2]>0 && px[0]>0 && px[0]<imageWidth && px[1]>0 && px[1]<imageHeight)
+                if(x[2]>0 &&
+                   px[0]>0 && px[0]<imageWidth &&
+                   px[1]>0 && px[1]<imageHeight)
                     zs.push_back(x[2]);
             }
             sort(zs.begin(),zs.end());
@@ -433,8 +429,10 @@ int main(int argc, char* argv[])
                 pSMaxDepth=farZ;
                 cPS.setZRange(nearZ, farZ);
             }else {
-                std::cout<<"    NO VISIBLE POINTS, demoting to depths from config file : "<<pSMinDepth<<"->"<< pSMaxDepth<<" ."<<std::endl;
-
+                std::cout<<"    NO VISIBLE POINTS, demoting depth-range to 2.5-100 * [Cameras average distance]: "<<minZ<<"->"<< maxZ<<" ."<<std::endl;
+                pSMinDepth=minZ;
+                pSMaxDepth=maxZ;
+                cPS.setZRange(minZ, maxZ);
             }
             maxZ  = pSMaxDepth;
             minZ  = pSMinDepth;
