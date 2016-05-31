@@ -416,6 +416,7 @@ int main(int argc, char* argv[])
                 std::cout<<"    distances ["<<outlierThres*100<<"%->"<<(1.0-outlierThres)*100<<"%] are "<<nearZ<<"->"<<farZ<<std::endl;
                 const double safeness_margin = safeness_margin_factor * (farZ - nearZ);
                 nearZ -= safeness_margin;
+                nearZ = std::max(0.0,nearZ);
                 farZ += safeness_margin;
                 std::cout<<"    planes will be "<<nearZ<<"->"<<farZ<<" by "<<(farZ-nearZ)/pSNumPlanes<<" increment"<<std::endl;
                 pSMinDepth=nearZ;
