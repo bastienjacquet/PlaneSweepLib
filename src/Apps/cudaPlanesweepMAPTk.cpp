@@ -133,7 +133,7 @@ int main(int argc, char* argv[])
             ("PS_MATCHING_COSTS", boost::program_options::value<std::string>(&pSMatchingCostsStr)->default_value("SAD"), "Type of matching cost strategy [ZNCC or SAD]")
             ("PS_MATCHING_WINDOW_SIZE", boost::program_options::value<int>(&pSMatchingWindowSize)->default_value(15), "Matching window size")
             ("PS_COLOR_MATCHING", boost::program_options::bool_switch(&pSColorMatching),"Toggle color matching")
-            ("krtdOnly", boost::program_options::bool_switch(&krtdOnly),"Don't compute depthmap, juste compute scaled krtd")
+            ("krtdOnly", boost::program_options::bool_switch(&krtdOnly),"Don't compute depthmap, just compute scaled krtd")
             ("PS_AUTO_RANGE", boost::program_options::bool_switch(&pSAutoRange),"Toggle auto range")
             ("PS_OCCLUSION_MODE", boost::program_options::value<std::string>(&pSOcclusionModeStr)->default_value("None"), "Type of occlusion mode [None, BestK or RefSplit]")
             ("PS_OCCLUSION_BEST_K_K", boost::program_options::value<int>(&pSOcclusionBestKK)->default_value(0), "Best K")
@@ -142,7 +142,7 @@ int main(int argc, char* argv[])
             ("PS_COST_THRESHOLD", boost::program_options::value<float>(&costThreshold)->default_value(0.0), "Cost threshold. Only need if \"filter\" is toggled")
             ("PS_UNIQUENESS_RATIO_THRESHOLD", boost::program_options::value<float>(&thresholdUniq)->default_value(0.5), "Uniqueness ratio threshold. Only need if \"filter\" is toggled")
             ("PS_MIN_ANGLE_DEGREE", boost::program_options::value<float>(&minAngleDegree)->default_value(2.0), "Min angle degree between two frames")
-            ("ref_view_step", boost::program_options::value<int>(&refViewStep)->default_value(1), "Best K")
+            ("ref_view_step", boost::program_options::value<int>(&refViewStep)->default_value(1), "Compute a depthmap every refViewStep frames.")
             ("writePointClouds", boost::program_options::value<std::string>(&writePointClouds)->default_value(""), "Saving data to a file [vrml, vti, vtp, vts or vtpvts]")
 
 //            ("writePointClouds", boost::program_options::bool_switch(&writePointClouds), "Write point clouds in vrml format")
@@ -332,9 +332,6 @@ int main(int argc, char* argv[])
     float minZ = (float) (2.5f*avgDistance);
     float maxZ = (float) (100.0f*avgDistance);
 
-    int imageWidth=1920;
-    int imageHeight=1080;
-    std::cout<< "Images are assumed to be " << imageWidth << "x"<< imageHeight <<std::endl;
     makeOutputFolder(outDir);
 
     globalTimer.restart();
@@ -375,7 +372,6 @@ int main(int argc, char* argv[])
         }
         std::cout << std::endl;
 
-
         timer.restart();
         std::cout << "Setting up cuda plane sweep and upload images..." << std::endl;
         PSL::CudaPlaneSweep cPS;
@@ -404,9 +400,14 @@ int main(int argc, char* argv[])
             // Compute near and far range from points that are in front of the camera and projects within image
             double nearZ,farZ;
             std::vector<float> zs;
+            const Eigen::Matrix3d& K = it->second.getK();
+            // Assume the image size is twice the principal point
+            const int imageWidth=static_cast<int>(K(0,2) * 2);
+            const int imageHeight=static_cast<int>(K(1,2) * 2);
+            std::cout<< "Image " << it->first << " is assumed to be " << imageWidth << "x"<< imageHeight <<std::endl;
             for(unsigned int i=0; i<points.size(); i++) {
                 Eigen::Vector3d x = (it->second.getR()*points[i] + it->second.getT());
-                Eigen::Vector3d px= 1.0/x[2]*(it->second.getK()*x);
+                Eigen::Vector3d px= 1.0 / x[2] * (K * x);
                 if(x[2]>0 &&
                    px[0]>0 && px[0]<imageWidth &&
                    px[1]>0 && px[1]<imageHeight)
@@ -461,7 +462,7 @@ int main(int argc, char* argv[])
         if (refImg.empty())
             PSL_THROW_EXCEPTION(("Failed to load image : "+refImgFileName).c_str())
 
-        //First write K File
+        //First, write K File
         {
           PSL::CameraMatrix<double> refCamScaled = cameras[refViewId];
           refCamScaled.scaleK(pSRescaleFactor,pSRescaleFactor);
@@ -529,7 +530,6 @@ int main(int argc, char* argv[])
                 cPS.setOcclusionMode(PSL::PLANE_SWEEP_OCCLUSION_NONE);
         }
         timer.restart();
-
         std::cout << "Running cuda plane sweep... cPSRef = " << cPSRef << std::endl;
         cPS.process(cPSRef);
         std::cout << " done in " << timer.elapsed() << " seconds." << std::endl;
@@ -588,7 +588,6 @@ int main(int argc, char* argv[])
             }
         }
 
-
 //        std::ostringstream fileNameData;
 //        fileNameData << outDir << "/" << baseName << "_depth_map.dat";
 //        dM.saveAsDataFile(fileNameData.str());
@@ -598,9 +597,6 @@ int main(int argc, char* argv[])
         dM.saveInvDepthAsColorImage(fileNameImg.str(), minZ, maxZ);
         std::cout << "Saved : " << fileNameImg.str() << std::endl;
 
-
-//        char kNameAbs[PATH_MAX];
-//                realpath(kFileName.str().c_str(), kNameAbs);
         if (writePointClouds != "")
         {
             // scale refImg
@@ -736,7 +732,6 @@ int main(int argc, char* argv[])
 
               //Writing structured grid to the disk
               if (writePointClouds == "vts" || writePointClouds == "vtpvts") {
-
 
                 vtkNew<vtkStructuredGrid> structuredGrid;
                 structuredGrid->SetDimensions(dM.getWidth(),dM.getHeight(),1);
