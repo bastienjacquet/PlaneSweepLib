@@ -424,8 +424,10 @@ int main(int argc, char* argv[])
                 farZ = zs[(int)((zs.size()-1)*(1-outlierThres))];
                 std::cout<<"    distances from camera are "<<zs[0]<<"->"<<zs[zs.size()-1]<<" ("<< zs.size()<<" visible points)"<<std::endl;
                 std::cout<<"    distances ["<<outlierThres*100<<"%->"<<(1.0-outlierThres)*100<<"%] are "<<nearZ<<"->"<<farZ<<std::endl;
-                nearZ *= (1-safeness_margin_factor);
-                farZ *= (1+safeness_margin_factor);
+                const double safeness_margin = safeness_margin_factor * (farZ - nearZ);
+                nearZ -= safeness_margin;
+                nearZ = std::max(0.0,nearZ);
+                farZ += safeness_margin;
                 std::cout<<"    planes will be "<<nearZ<<"->"<<farZ<<" by "<<(farZ-nearZ)/pSNumPlanes<<" increment"<<std::endl;
                 pSMinDepth=nearZ;
                 pSMaxDepth=farZ;
