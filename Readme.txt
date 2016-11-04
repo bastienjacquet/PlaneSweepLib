@@ -6,6 +6,7 @@ The package comes with test data and scripts to run the software on the test dat
 It was tested on Linux using the GCC Toolchain and on Windows using Visual Studio.
 
 Copyright 2016 Christian Haene (ETH Zuerich)
+Copyright 2016 Bastien Jacquet, Louis Amore (Kitware) [for src/Apps/cudaPlanesweepMAPTk.cpp]
 
 PSL is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
