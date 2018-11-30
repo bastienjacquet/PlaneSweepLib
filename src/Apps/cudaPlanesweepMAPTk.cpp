@@ -348,7 +348,7 @@ int main(int argc, char* argv[])
     }
     listName = outDir + "/kList.txt";
     std::ofstream kList(listName.c_str());
-    for (std::map<int, PSL::CameraMatrix<double> >::iterator it = cameras.begin(); it != cameras.end(); std::advance(it, refViewStep), count++)
+    for (std::map<int, PSL::CameraMatrix<double> >::iterator it = cameras.begin(); it != cameras.end(); count++)
     {
         // if we want a specific ref view, go for it.
         if(view>=0 && it->first!=view) continue;
@@ -769,6 +769,9 @@ int main(int argc, char* argv[])
         std::cout << "Elapsed time: "<< globalTimer.elapsed()<< "s for " << done << "/" << tot << " ref views."<<std::endl
                   << "Estimated Time Remaining: " << globalTimer.elapsed()/done*tbd << "s for "
                   << tbd << "/" << tot << " ref views."<<std::endl;
+        int delta = refViewStep;
+        while(it != cameras.end() && delta--)
+          ++it;
     }
     filenameListvts.close();
     filenameListvtp.close();
